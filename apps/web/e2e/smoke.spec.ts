@@ -108,6 +108,68 @@ test('setup, browse, play with lock-screen metadata, fix a match, manage sources
   await expectAccessible(page, 'add source');
 });
 
+test('add Subsonic and Real-Debrid sources through the UI (incl. "Log in with…") and play from them', async ({ page }) => {
+  await signIn(page);
+  const fakes = `http://127.0.0.1:${Number(new URL(page.url()).port) + 1}`;
+
+  if (test.info().project.name === 'mobile') {
+    // Subsonic: form generated from the provider's configSchema.
+    await page.goto('/settings/sources/new');
+    await page.getByRole('link', { name: /Subsonic \/ Navidrome/ }).click();
+    await page.getByLabel(/Server URL/).fill(`${fakes}/subsonic`);
+    await page.getByLabel('Username').fill('e2e');
+    await page.getByLabel('Password', { exact: true }).fill('e2e-pass');
+    await expect(page.getByLabel('Password', { exact: true })).toHaveAttribute('type', 'password');
+    await page.getByRole('button', { name: 'Test connection' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Connected to fakesonic 1.0 (API 1.16.1, OpenSubsonic).' })).toBeVisible();
+    await expectAccessible(page, 'add Subsonic');
+    await page.getByRole('button', { name: 'Add source' }).click();
+    await expect(page.getByRole('heading', { name: 'Sources', level: 1 })).toBeVisible();
+
+    // Real-Debrid: "Log in with Real-Debrid" device flow, no key pasted.
+    await page.getByRole('link', { name: 'Add source' }).click();
+    await page.getByRole('link', { name: /Real-Debrid/ }).click();
+    await page.getByRole('button', { name: 'Log in with Real-Debrid' }).click();
+    await expect(page.getByText('E2E-CODE')).toBeVisible();
+    await expect(page.getByRole('link', { name: /127\.0\.0\.1:\d+\/rd\/device/ })).toBeVisible();
+    await expectAccessible(page, 'device login');
+    await expect(page.getByText('Signed in. Save the source to finish.')).toBeVisible({ timeout: 15_000 });
+    await page.getByRole('button', { name: 'Test connection' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Connected to Real-Debrid as e2e-user, premium until 2030-01-01.' })).toBeVisible();
+    await page.getByRole('button', { name: 'Add source' }).click();
+    await expect(page.getByRole('heading', { name: 'Sources', level: 1 })).toBeVisible();
+  }
+
+  // Both sources are listed; the debrid one shows it's signed in, and no secret is ever rendered.
+  await page.goto('/settings/sources');
+  await expect(page.getByRole('listitem', { name: 'Subsonic / Navidrome' })).toBeVisible();
+  const rd = page.getByRole('listitem', { name: 'Real-Debrid' });
+  await expect(rd.getByText('Signed in')).toBeVisible();
+  const html = await page.content();
+  for (const secret of ['e2e-pass', 'E2E-ACCESS', 'E2E-REFRESH', 'E2ESECRET']) expect(html).not.toContain(secret);
+
+  // Their tracks appear (scan + tags) with source badges, and play through the server.
+  await expect
+    .poll(
+      async () => {
+        await page.goto('/library/tracks');
+        return (await page.getByRole('list', { name: 'Tracks' }).textContent()) ?? '';
+      },
+      { timeout: 30_000, intervals: [1000] },
+    )
+    .toMatch(/Server Song One[\s\S]*|Debrid Song/);
+  await expect(page.getByRole('listitem').filter({ hasText: 'Debrid Song' })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('listitem').filter({ hasText: 'Server Song One' })).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'Server Song One' }).getByText('Server', { exact: true })).toBeAttached();
+
+  for (const title of ['Debrid Song', 'Server Song One']) {
+    await page.getByRole('button', { name: new RegExp(`^Play ${title} by`) }).click();
+    await expect.poll(() => page.evaluate(() => navigator.mediaSession.metadata?.title)).toBe(title);
+    await expect.poll(() => page.evaluate(() => navigator.mediaSession.playbackState), { timeout: 15_000 }).toBe('playing');
+  }
+  await page.getByRole('region', { name: 'Player' }).getByRole('button', { name: 'Pause' }).click();
+});
+
 test('offline: the shell loads from the service worker and explains the server is unreachable', async ({ page, context }) => {
   await signIn(page);
   await page.evaluate(async () => {

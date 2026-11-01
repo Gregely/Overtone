@@ -16,6 +16,9 @@ export class ProviderRegistry {
     if (!ID_RE.test(id)) throw new Error(`Provider id "${id}" must be kebab-case`);
     if (this.#plugins.has(id)) throw new Error(`Provider "${id}" is already registered`);
     assertValidSchema(plugin.manifest.configSchema, `provider "${id}"`);
+    if (Boolean(plugin.manifest.deviceFlow) !== Boolean(plugin.manifest.configSchema.deviceLogin)) {
+      throw new Error(`Provider "${id}": deviceFlow and configSchema.deviceLogin must be declared together`);
+    }
     this.#plugins.set(id, plugin);
     return this;
   }
@@ -41,7 +44,10 @@ export class ProviderRegistry {
       name: m.name,
       description: m.description,
       category: m.category,
-      configSchema: { fields: m.configSchema.fields.filter((f) => !f.hidden) },
+      configSchema: {
+        fields: m.configSchema.fields.filter((f) => !f.hidden),
+        ...(m.configSchema.deviceLogin ? { deviceLogin: m.configSchema.deviceLogin } : {}),
+      },
       capabilities: {
         watch: Boolean(m.capabilities?.watch),
         testConnection: Boolean(m.capabilities?.testConnection),

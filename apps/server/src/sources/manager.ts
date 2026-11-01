@@ -13,7 +13,7 @@ import type { Db } from '../db/index.js';
 import { ApiError } from '../http/errors.js';
 import { createProviderFetch } from '../http/provider-fetch.js';
 import { createRedactingLogger, type BaseLogger } from '../http/redact.js';
-import { NotImplementedError, ProviderError } from '../providers/errors.js';
+import { ProviderError } from '../providers/errors.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ProviderContext, ProviderPlugin, SourceProvider } from '../providers/types.js';
 
@@ -104,14 +104,33 @@ export class SourceManager {
       enabled: row.enabled === 1,
       priority: row.priority,
       streamMode: row.stream_mode,
-      config: plugin ? toPublicConfig(plugin.manifest.configSchema, values, secretKeys) : { values: {}, secretsSet: [] },
+      config: plugin ? publicConfig(plugin, values, secretKeys) : { values: {}, secretsSet: [] },
       lastScanAt: row.last_scan_at ? new Date(row.last_scan_at).toISOString() : null,
       lastError: row.last_error,
       fileCount,
     };
   }
 
-  create(input: SourceWriteDto): SourceRow {
+  /**
+   * Apply credentials from a completed "Log in with…" flow: they replace every
+   * secret listed in the schema's deviceLogin.replaces. Conversely, when the
+   * user pastes one of those secrets, the other device-login secrets are
+   * cleared so stale OAuth tokens never shadow the new key.
+   */
+  #mergeSecrets(plugin: ProviderPlugin, current: Record<string, string>, typed: Record<string, string>, device?: Record<string, string>): Record<string, string> {
+    const replaces = new Set(plugin.manifest.configSchema.deviceLogin?.replaces ?? []);
+    const out = { ...current };
+    if (device) {
+      for (const k of replaces) delete out[k];
+      for (const [k, v] of Object.entries(device)) if (replaces.has(k)) out[k] = v;
+      for (const [k, v] of Object.entries(typed)) if (!replaces.has(k)) out[k] = v;
+      return out;
+    }
+    if (Object.keys(typed).some((k) => replaces.has(k))) for (const k of replaces) delete out[k];
+    return { ...out, ...typed };
+  }
+
+  create(input: SourceWriteDto, deviceSecrets?: Record<string, string>): SourceRow {
     const plugin = input.providerId ? this.#d.registry.get(input.providerId) : undefined;
     if (!plugin) throw ApiError.validation({ providerId: 'Unknown provider' });
     const id = randomBytes(6).toString('base64url');
@@ -119,6 +138,7 @@ export class SourceManager {
     if (!result.ok) throw ApiError.validation(prefixFields(result.errors));
     const streamMode = this.#checkStreamMode(plugin, input.streamMode ?? 'proxy');
     const name = cleanName(input.name ?? plugin.manifest.name);
+    const secrets = this.#mergeSecrets(plugin, {}, result.secrets, deviceSecrets);
 
     this.#d.db
       .prepare(
@@ -133,31 +153,31 @@ export class SourceManager {
         clampPriority(input.priority ?? defaultPriority(plugin)),
         streamMode,
         JSON.stringify(result.values),
-        Object.keys(result.secrets).length ? this.#d.secretBox.sealJson(result.secrets, id) : null,
+        Object.keys(secrets).length ? this.#d.secretBox.sealJson(secrets, id) : null,
         this.#now(),
       );
     this.#emit({ type: 'created', sourceId: id });
     return this.get(id)!;
   }
 
-  update(id: string, input: SourceWriteDto): SourceRow {
+  update(id: string, input: SourceWriteDto, deviceSecrets?: Record<string, string>): SourceRow {
     const row = this.require(id);
     if (input.providerId && input.providerId !== row.provider_id) throw ApiError.badRequest('providerId cannot be changed');
     const plugin = this.plugin(row);
     let configJson = row.config_json;
     let secretsEnc = row.secrets_enc;
 
-    if (input.config) {
+    if (input.config || deviceSecrets) {
       const existing = this.#secrets(row);
       // PATCH semantics for non-secret fields: unspecified fields keep their value.
       // Hidden fields are stripped from what's stored, but NOT from user input,
       // so validation rejects attempts to set them.
       const stored = JSON.parse(row.config_json) as ConfigValues;
       for (const f of plugin.manifest.configSchema.fields) if (f.hidden || f.type === 'secret') delete stored[f.key];
-      const merged = { ...stored, ...input.config };
+      const merged = { ...stored, ...(input.config ?? {}) };
       const result = validateConfig(plugin.manifest.configSchema, merged, { existingSecrets: Object.keys(existing) });
       if (!result.ok) throw ApiError.validation(prefixFields(result.errors));
-      const secrets = { ...existing, ...result.secrets };
+      const secrets = this.#mergeSecrets(plugin, existing, result.secrets, deviceSecrets);
       for (const k of result.clearedSecrets) delete secrets[k];
       configJson = JSON.stringify(result.values);
       secretsEnc = Object.keys(secrets).length ? this.#d.secretBox.sealJson(secrets, id) : null;
@@ -210,7 +230,7 @@ export class SourceManager {
    * Test a config before (or without) saving it. With `sourceId`, unspecified
    * secrets fall back to the stored ones, so users needn't re-enter keys.
    */
-  async test(providerId: string, rawConfig: Record<string, unknown>, sourceId?: string): Promise<ConnectionTestResultDto> {
+  async test(providerId: string, rawConfig: Record<string, unknown>, sourceId?: string, deviceSecrets?: Record<string, string>): Promise<ConnectionTestResultDto> {
     const plugin = this.#d.registry.get(providerId);
     if (!plugin) throw ApiError.validation({ providerId: 'Unknown provider' });
     const row = sourceId ? this.require(sourceId) : undefined;
@@ -221,7 +241,7 @@ export class SourceManager {
     );
     const result = validateConfig(plugin.manifest.configSchema, visibleInput, { existingSecrets: Object.keys(existing) });
     if (!result.ok) throw ApiError.validation(prefixFields(result.errors));
-    const secrets = { ...existing, ...result.secrets };
+    const secrets = this.#mergeSecrets(plugin, existing, result.secrets, deviceSecrets);
     for (const k of result.clearedSecrets) delete secrets[k];
     const tempRow: SourceRow = row ?? ({ id: 'test', provider_id: providerId } as SourceRow);
     let provider: SourceProvider | undefined;
@@ -230,7 +250,7 @@ export class SourceManager {
       if (!provider.testConnection) return { ok: true, message: 'Configuration is valid.' };
       return await provider.testConnection({ signal: AbortSignal.timeout(30_000) });
     } catch (err) {
-      if (err instanceof ProviderError || err instanceof NotImplementedError) return { ok: false, message: err.message };
+      if (err instanceof ProviderError) return { ok: false, message: err.message };
       if ((err as Error).name === 'TimeoutError') return { ok: false, message: 'Timed out' };
       throw err;
     } finally {
@@ -305,6 +325,15 @@ export class SourceManager {
       },
     };
   }
+}
+
+function publicConfig(plugin: ProviderPlugin, values: ConfigValues, secretKeys: string[]) {
+  const pub = toPublicConfig(plugin.manifest.configSchema, values, secretKeys);
+  const hiddenLogin = (plugin.manifest.configSchema.deviceLogin?.replaces ?? []).filter(
+    (k) => plugin.manifest.configSchema.fields.find((f) => f.key === k)?.hidden,
+  );
+  const viaDevice = hiddenLogin.some((k) => secretKeys.includes(k));
+  return viaDevice ? { ...pub, signedInWithDeviceLogin: true } : pub;
 }
 
 function prefixFields(errors: Record<string, string>): Record<string, string> {

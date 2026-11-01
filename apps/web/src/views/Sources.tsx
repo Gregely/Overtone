@@ -9,6 +9,7 @@ import { Dialog } from '../ui/Dialog';
 import { plural, relativeTime } from '../ui/format';
 import { Icon } from '../ui/Icon';
 import { EmptyState, errorMessage, QueryView, Spinner } from '../ui/states';
+import { DeviceLogin } from './DeviceLogin';
 
 const CATEGORY: Record<ProviderManifestDto['category'], string> = {
   local: 'On this server',
@@ -88,6 +89,7 @@ function SourceCard({ source: s, providerName, scanning }: { source: SourceDto; 
         <span className="badge">{providerName}</span>
         {!s.enabled && <span className="badge warn">Disabled</span>}
         {s.streamMode === 'redirect' && <span className="badge">Direct streaming</span>}
+        {s.config.signedInWithDeviceLogin && <span className="badge accent">Signed in</span>}
       </div>
       <p className="small muted">
         {plural(s.fileCount, 'file')} · last scan {relativeTime(s.lastScanAt)}
@@ -250,7 +252,11 @@ function SourceForm({ provider, source }: { provider: ProviderManifestDto; sourc
   const [clear, setClear] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const [deviceLogin, setDeviceLogin] = useState<string | null>(null);
   const saved = new Set(source?.config.secretsSet ?? []);
+  const loginSpec = provider.configSchema.deviceLogin;
+  // A completed login replaces these secrets, so they're no longer required in the form.
+  const loginCovers = new Set(deviceLogin || source?.config.signedInWithDeviceLogin ? (loginSpec?.replaces ?? []) : []);
 
   const config = () => buildConfig(fields, values, secrets, clear);
 
@@ -258,7 +264,7 @@ function SourceForm({ provider, source }: { provider: ProviderManifestDto; sourc
     e.preventDefault();
     setErrors({});
     setFormError(null);
-    const body: SourceWriteDto = { name, enabled, streamMode, config: config() };
+    const body: SourceWriteDto = { name, enabled, streamMode, config: config(), ...(deviceLogin ? { deviceLogin } : {}) };
     if (priority !== '') body.priority = Number(priority);
     if (!source) body.providerId = provider.id;
     save.mutate(
@@ -277,7 +283,7 @@ function SourceForm({ provider, source }: { provider: ProviderManifestDto; sourc
 
   const runTest = () => {
     test.reset();
-    test.mutate({ ...(source ? { id: source.id } : {}), providerId: provider.id, config: config() });
+    test.mutate({ ...(source ? { id: source.id } : {}), providerId: provider.id, config: config(), ...(deviceLogin ? { deviceLogin } : {}) });
   };
 
   return (
@@ -291,6 +297,16 @@ function SourceForm({ provider, source }: { provider: ProviderManifestDto; sourc
         )}
         <TextInput id="src-name" label="Name" value={name} onChange={setName} error={errors.name} required />
 
+        {loginSpec && (
+          <DeviceLogin
+            providerId={provider.id}
+            spec={loginSpec}
+            signedIn={Boolean(source?.config.signedInWithDeviceLogin)}
+            onComplete={setDeviceLogin}
+          />
+        )}
+        {errors.deviceLogin && <p className="error-text">{errors.deviceLogin}</p>}
+
         {fields.map((f) => (
           <SchemaField
             key={f.key}
@@ -300,6 +316,7 @@ function SourceForm({ provider, source }: { provider: ProviderManifestDto; sourc
             secret={secrets[f.key] ?? ''}
             onSecret={(v) => setSecrets((s) => ({ ...s, [f.key]: v }))}
             isSaved={saved.has(f.key)}
+            coveredByLogin={loginCovers.has(f.key)}
             clearing={Boolean(clear[f.key])}
             onClear={(c) => setClear((s) => ({ ...s, [f.key]: c }))}
             error={errors[f.key]}
@@ -429,6 +446,7 @@ function SchemaField(props: {
   secret: string;
   onSecret: (v: string) => void;
   isSaved: boolean;
+  coveredByLogin?: boolean;
   clearing: boolean;
   onClear: (c: boolean) => void;
   error?: string | undefined;
@@ -476,8 +494,16 @@ function SchemaField(props: {
             autoComplete="new-password"
             value={props.secret}
             onChange={props.onSecret}
-            required={f.required && !props.isSaved}
-            placeholder={props.isSaved ? (props.clearing ? 'Will be removed' : 'Saved. Leave blank to keep') : (f.placeholder ?? '')}
+            required={f.required && !props.isSaved && !props.coveredByLogin}
+            placeholder={
+              props.coveredByLogin && !props.isSaved
+                ? 'Not needed: signed in with the login above'
+                : props.isSaved
+                  ? props.clearing
+                    ? 'Will be removed'
+                    : 'Saved. Leave blank to keep'
+                  : (f.placeholder ?? '')
+            }
             help={f.help ?? (props.isSaved ? 'Stored encrypted on the server; it is never shown again.' : undefined)}
             error={error}
           />

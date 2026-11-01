@@ -1,16 +1,15 @@
 import type { ScanReportDto, ScanStatusDto } from '@overtone/shared';
-import { parseBuffer } from 'music-metadata';
 import type { BaseLogger } from '../http/redact.js';
 import { parseFilename } from '../metadata/matcher/filename.js';
 import type { Matcher, MatchInput } from '../metadata/matcher/matcher.js';
 import { MusicBrainzError } from '../metadata/musicbrainz/client.js';
-import { fromMusicMetadata, mergeTags } from '../metadata/tags.js';
+import { probeRemoteTags } from '../metadata/probe.js';
+import { mergeTags } from '../metadata/tags.js';
 import type { ResolveCache } from '../providers/resolve-cache.js';
 import type { FileTags, SourceProvider } from '../providers/types.js';
 import type { SourceManager } from '../sources/manager.js';
 import type { LibraryRepo, SourceFileRow } from './repo.js';
 
-const PROBE_BYTES = 256 * 1024;
 
 export interface ScannerDeps {
   sources: SourceManager;
@@ -215,24 +214,10 @@ export class LibraryScanner {
     return tags;
   }
 
-  /** Read the first 256 KB of a remote file and parse whatever tags live there (ID3v2, FLAC, Vorbis). */
+  /** Probe a remote file's tags through the shared resolve cache (same link playback will use). */
   async #probeRemote(sourceId: string, provider: SourceProvider, file: SourceFileRow, signal: AbortSignal): Promise<FileTags | null> {
     const stream = await this.#d.resolver.resolve(sourceId, provider, file.file_id, { signal });
-    if (!/^https?:/.test(stream.url)) return null;
-    const res = await (this.#d.fetch ?? fetch)(stream.url, {
-      headers: { ...(stream.headers ?? {}), Range: `bytes=0-${PROBE_BYTES - 1}` },
-      signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
-    });
-    if (!res.ok) {
-      await res.body?.cancel();
-      return null;
-    }
-    const buf = new Uint8Array(await res.arrayBuffer());
-    const meta = await parseBuffer(buf.subarray(0, PROBE_BYTES), { mimeType: file.mime ?? stream.mimeType ?? '', size: file.size || undefined }, {
-      skipCovers: true,
-      skipPostHeaders: true,
-    });
-    return fromMusicMetadata(meta);
+    return probeRemoteTags(this.#d.fetch ?? fetch, stream, { mimeType: file.mime, size: file.size }, signal);
   }
 }
 

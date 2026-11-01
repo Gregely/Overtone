@@ -44,6 +44,7 @@ export async function createHarness(opts: HarnessOptions = {}) {
     logLevel: 'debug',
     trustProxy: false,
     version: 'test',
+    premiumizeClientId: null,
     ...opts.config,
   };
   const registry = new ProviderRegistry();

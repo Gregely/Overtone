@@ -30,6 +30,13 @@ describe('ProviderRegistry', () => {
     expect(() => new ProviderRegistry().register(broken)).toThrow(/duplicate/);
   });
 
+  it('requires deviceFlow and configSchema.deviceLogin together', () => {
+    const half = fake('half', { deviceFlow: { start: async () => { throw new Error(); }, poll: async () => ({ status: 'pending' }) } });
+    expect(() => new ProviderRegistry().register(half)).toThrow(/declared together/);
+    const bad = fake('bad', { configSchema: { fields: [{ key: 'k', type: 'string', label: 'K' }], deviceLogin: { label: 'x', replaces: ['k'] } } });
+    expect(() => new ProviderRegistry().register(bad)).toThrow(/must be a secret field/);
+  });
+
   it('strips hidden fields and handlers from client DTOs', () => {
     const r = new ProviderRegistry().register(
       fake('with-hidden', {
@@ -38,6 +45,7 @@ describe('ProviderRegistry', () => {
             { key: 'apiKey', type: 'secret', label: 'Key' },
             { key: 'refreshToken', type: 'secret', label: 'R', hidden: true },
           ],
+          deviceLogin: { label: 'Log in with X', replaces: ['apiKey', 'refreshToken'] },
         },
         capabilities: { testConnection: true },
         deviceFlow: { start: async () => { throw new Error(); }, poll: async () => ({ status: 'pending' }) },
@@ -45,6 +53,7 @@ describe('ProviderRegistry', () => {
     );
     const [dto] = r.toDtos();
     expect(dto?.configSchema.fields.map((f) => f.key)).toEqual(['apiKey']);
+    expect(dto?.configSchema.deviceLogin).toEqual({ label: 'Log in with X', replaces: ['apiKey', 'refreshToken'] });
     expect(dto?.capabilities).toEqual({ watch: false, testConnection: true, deviceFlow: true, redirectable: false });
     // DTO must be plain JSON (no functions leaking through).
     expect(JSON.parse(JSON.stringify(dto))).toEqual(dto);

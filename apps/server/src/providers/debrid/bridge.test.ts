@@ -22,8 +22,12 @@ function definition(adapter: Partial<DebridAdapter>, extra: Partial<DebridAdapte
 describe('createDebridPlugin', () => {
   it('builds a manifest with a required API key when there is no device flow', () => {
     const { manifest } = createDebridPlugin(definition({}).def);
-    expect(manifest).toMatchObject({ id: 'fake-debrid', category: 'debrid', capabilities: { testConnection: true } });
-    expect(manifest.configSchema.fields).toEqual([expect.objectContaining({ key: 'apiKey', type: 'secret', required: true })]);
+    expect(manifest).toMatchObject({ id: 'fake-debrid', category: 'debrid', capabilities: { testConnection: true, redirectable: false } });
+    expect(manifest.configSchema.fields).toEqual([
+      expect.objectContaining({ key: 'apiKey', type: 'secret', required: true }),
+      expect.objectContaining({ key: 'probeTags', type: 'boolean', default: true }),
+    ]);
+    expect(manifest.configSchema.deviceLogin).toBeUndefined();
   });
 
   it('makes the API key optional and adds hidden managed secrets when a device flow exists', () => {
@@ -37,7 +41,9 @@ describe('createDebridPlugin', () => {
     expect(manifest.configSchema.fields).toEqual([
       expect.objectContaining({ key: 'apiKey', required: false }),
       expect.objectContaining({ key: 'refreshToken', type: 'secret', hidden: true }),
+      expect.objectContaining({ key: 'probeTags' }),
     ]);
+    expect(manifest.configSchema.deviceLogin).toEqual({ label: 'Log in with FakeDebrid', help: expect.any(String), replaces: ['apiKey', 'refreshToken'] });
   });
 
   it('lists only audio files and fills in MIME types', async () => {
@@ -79,20 +85,24 @@ describe('createDebridPlugin', () => {
     expect(stream.expiresAt!.getTime()).toBeGreaterThanOrEqual(before + DEFAULT_LINK_TTL_MS);
   });
 
-  it('keeps adapter-provided expiry and redirect safety', async () => {
+  it('keeps adapter-provided expiry but never allows redirects (debrid links are bearer/IP-bound)', async () => {
     const expiresAt = new Date('2030-01-01T00:00:00Z');
-    const { def } = definition({ resolveLink: async () => ({ url: 'https://dl', expiresAt, redirectSafe: true, size: 42 }) });
+    const { def } = definition({ resolveLink: async () => ({ url: 'https://dl', expiresAt, size: 42 }) });
     const stream = await createDebridPlugin(def).create({ apiKey: 'k' }, createTestContext()).resolveStream('x', { signal });
-    expect(stream).toEqual({ url: 'https://dl', expiresAt, redirectSafe: true, size: 42 });
+    expect(stream).toEqual({ url: 'https://dl', expiresAt, redirectSafe: false, size: 42 });
   });
 
   it('maps account status to a test-connection result', async () => {
     const make = (adapter: Partial<DebridAdapter>) =>
       createDebridPlugin(definition(adapter).def).create({ apiKey: 'k' }, createTestContext());
 
-    const premium = await make({ testConnection: async () => ({ premium: true, username: 'me', premiumUntil: new Date('2030-01-01Z') }) })
+    const premium = await make({ testConnection: async () => ({ premium: true, username: 'me', plan: 'Pro', premiumUntil: new Date('2030-01-01Z') }) })
       .testConnection!({ signal });
-    expect(premium).toEqual({ ok: true, message: expect.any(String), details: { username: 'me', premiumUntil: '2030-01-01T00:00:00.000Z' } });
+    expect(premium).toEqual({
+      ok: true,
+      message: 'Connected to FakeDebrid as me, premium until 2030-01-01.',
+      details: { account: 'me', plan: 'Pro', premiumUntil: '2030-01-01' },
+    });
 
     const free = await make({ testConnection: async () => ({ premium: false }) }).testConnection!({ signal });
     expect(free.ok).toBe(false);

@@ -6,10 +6,10 @@ a Navidrome/Subsonic server, Internet Archive collections, or the audio
 already in your debrid account. It merges them into one MusicBrainz-matched
 library and streams to a PWA and an Android app.
 
-> **Status: stage 3 of 6.** The server and the installable web app work
-> end to end with local music folders. Subsonic, Internet Archive and debrid
-> sources come in stage 4, and the Android app in stage 5. See
-> [`docs/PLAN.md`](docs/PLAN.md).
+> **Status: stage 4 of 6.** The server and the installable web app work end
+> to end with every source type: local folders, Subsonic/Navidrome, Internet
+> Archive, Real-Debrid, AllDebrid, TorBox and Premiumize. The Android app
+> comes in stage 5. See [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Run it (Docker, e.g. on a Raspberry Pi 4/5)
 
@@ -71,6 +71,51 @@ npm run dev:web
 
 The service worker is only active in production builds (`npm run build`,
 then serve `apps/web/dist` from the server with `OVERTONE_WEB_DIR`).
+
+## Sources
+
+Add them in *Settings › Sources*. Each form is generated from the provider's
+schema. Saved keys and passwords are encrypted on the server and never shown
+again.
+
+| Source | What it plays | Sign-in |
+|---|---|---|
+| Local folder | Files under a folder on the server (Docker: `MUSIC_DIR`) | — |
+| Subsonic / Navidrome | Everything on a Subsonic or OpenSubsonic server | Username + password (sent as a salted token), or an API key |
+| Internet Archive | One collection or saved query, Creative Commons / public-domain audio only | — |
+| Real-Debrid · AllDebrid · TorBox | Audio already in your account (finished torrents, downloads, saved links) | **Log in with …** button, or paste an API key |
+| Premiumize.me | Audio already in your cloud | API key. *Log in with Premiumize* appears if you set `OVERTONE_PREMIUMIZE_CLIENT_ID` to a registered OAuth client. |
+
+Debrid and Subsonic streams always go through your server. Their links carry
+credentials or are tied to the server's IP. Expired links are refreshed
+automatically.
+
+## Writing a provider
+
+A provider is a folder under `apps/server/src/providers/<id>/` exporting a
+`ProviderPlugin`:
+
+- a **manifest** with an id, a name, and a declarative `configSchema` (the
+  Settings form is generated from it; `secret` fields are encrypted and
+  write-only);
+- **`listLibrary()`**, which yields the audio files that already exist in the
+  source (`{ id, name, size, path, tags? }`);
+- **`resolveStream(fileId)`**, which returns `{ url, headers?, expiresAt?,
+  redirectSafe? }`.
+
+Optionally it can also provide `testConnection()`, `readTags()`,
+`readArtwork()`, `watch()`, or a **"Log in with …"** device flow, which is a
+generic schema feature any provider can use. Debrid services implement the
+smaller `DebridAdapter` interface instead.
+
+Ground rules: use only the service's documented API, and cite the docs and
+the date checked in the adapter's header. Keep it read-only (nothing that
+adds content). Keep secrets out of errors and logs. Test against fixture
+responses covering success, bad and expired keys, 429 backoff, network
+failure, and an empty account.
+
+The full guide, with a worked example, the rules, and the test kit, is in
+[`docs/providers.md`](docs/providers.md).
 
 ## Develop
 

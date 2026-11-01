@@ -18,6 +18,8 @@ export interface Config {
   logLevel: string;
   trustProxy: boolean;
   version: string;
+  /** Registered Premiumize OAuth client id (enables "Log in with Premiumize"). */
+  premiumizeClientId: string | null;
 }
 
 export class ConfigError extends Error {
@@ -49,6 +51,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, version = '0.0.
     logLevel: env.OVERTONE_LOG_LEVEL || 'info',
     trustProxy: boolEnv(env, 'OVERTONE_TRUST_PROXY', false),
     version,
+    premiumizeClientId: env.OVERTONE_PREMIUMIZE_CLIENT_ID?.trim() || null,
   };
 }
 

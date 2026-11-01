@@ -16,6 +16,7 @@ import type { MusicBrainzApi } from './metadata/musicbrainz/types.js';
 import { createDefaultRegistry } from './providers/index.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { ResolveCache } from './providers/resolve-cache.js';
+import { DeviceLoginService } from './sources/device-login.js';
 import { SourceManager } from './sources/manager.js';
 import { StreamService } from './streaming/service.js';
 
@@ -34,6 +35,7 @@ export interface Services {
   auth: AuthService;
   registry: ProviderRegistry;
   sources: SourceManager;
+  deviceLogins: DeviceLoginService;
   library: LibraryRepo;
   resolver: ResolveCache;
   mb: MusicBrainzApi;
@@ -56,7 +58,7 @@ export function createServices(
   const db = o.db ?? openDatabase(path.join(config.dataDir, 'overtone.db'));
   const now = o.now ?? Date.now;
   const userAgent = mbUserAgent(config.version, config.mbContact);
-  const registry = o.registry ?? createDefaultRegistry();
+  const registry = o.registry ?? createDefaultRegistry({ premiumizeClientId: config.premiumizeClientId });
   const auth = new AuthService(db, { masterKey: config.secretKey, multiUser: config.multiUser, now });
   const sources = new SourceManager({
     db,
@@ -67,6 +69,7 @@ export function createServices(
     now,
     ...(o.fetch ? { fetch: o.fetch } : {}),
   });
+  const deviceLogins = new DeviceLoginService({ registry, logger, userAgent, now, ...(o.fetch ? { fetch: o.fetch } : {}) });
   const library = new LibraryRepo(db, now);
   const resolver = new ResolveCache({ now });
   const mb = o.mb ?? new MusicBrainzClient({ db, userAgent, now, ...(o.fetch ? { fetch: o.fetch } : {}) });
@@ -101,6 +104,7 @@ export function createServices(
     auth,
     registry,
     sources,
+    deviceLogins,
     library,
     resolver,
     mb,

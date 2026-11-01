@@ -340,7 +340,11 @@ export class PlayerController {
         this.#set({ status: 'playing', buffering: false, error: null });
         return;
       case 'paused':
-        if (this.#state.status === 'playing') this.#set({ status: 'paused', buffering: false });
+        // Also covers a blocked autoplay while loading: show a play button, not an endless spinner.
+        if (this.#state.status === 'playing' || this.#state.status === 'loading') {
+          this.#intent = 'pause';
+          this.#set({ status: 'paused', buffering: false });
+        }
         return;
       case 'waiting':
         this.#set({ buffering: true });

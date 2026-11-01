@@ -66,11 +66,3 @@ export class ProviderError extends Error {
 export function isProviderError(err: unknown): err is ProviderError {
   return err instanceof ProviderError;
 }
-
-/** Placeholder thrown by providers scheduled for a later build stage. */
-export class NotImplementedError extends Error {
-  override readonly name = 'NotImplementedError';
-  constructor(what: string, stage: number) {
-    super(`${what} is not implemented yet (planned for stage ${stage})`);
-  }
-}

@@ -61,8 +61,23 @@ export interface SelectField extends BaseField {
 
 export type ConfigField = TextField | SecretField | NumberField | BooleanField | SelectField;
 
+/**
+ * Optional "Log in with <service>" (OAuth device / PIN flow). Any provider can
+ * declare it; the UI renders a button, shows the user code + verification
+ * link, polls, and on success the server stores the resulting credentials
+ * into `replaces` secret fields (credentials never reach the client).
+ */
+export interface DeviceLoginSpec {
+  /** Button text, e.g. "Log in with Real-Debrid". */
+  label: string;
+  help?: string;
+  /** Secret field keys a completed login overwrites (everything else is cleared). */
+  replaces: ReadonlyArray<string>;
+}
+
 export interface ConfigSchema {
   fields: ReadonlyArray<ConfigField>;
+  deviceLogin?: DeviceLoginSpec;
 }
 
 export type ConfigValue = string | number | boolean;
@@ -73,6 +88,8 @@ export interface PublicSourceConfig {
   values: ConfigValues;
   /** Keys of secret fields that currently have a stored value. */
   secretsSet: string[];
+  /** Credentials came from a "Log in with…" flow (stored in hidden fields). */
+  signedInWithDeviceLogin?: boolean;
 }
 
 export type ValidationResult =
@@ -92,6 +109,10 @@ const MAX_STRING = 4096;
 /** Throws if a schema itself is malformed. Called when a plugin is registered. */
 export function assertValidSchema(schema: ConfigSchema, owner = 'schema'): void {
   const seen = new Set<string>();
+  for (const k of schema.deviceLogin?.replaces ?? []) {
+    const f = schema.fields.find((x) => x.key === k);
+    if (!f || f.type !== 'secret') throw new Error(`${owner}: deviceLogin.replaces "${k}" must be a secret field`);
+  }
   for (const f of schema.fields) {
     if (!KEY_RE.test(f.key)) throw new Error(`${owner}: invalid field key "${f.key}"`);
     if (seen.has(f.key)) throw new Error(`${owner}: duplicate field key "${f.key}"`);

@@ -73,14 +73,31 @@ fetching more as the queue advances or when `expiresAt` nears.
 |---|---|---|
 | GET | `/providers` | Plugin catalog with `configSchema` for rendering forms (any user) |
 | GET/POST | `/sources` | List / create `{ providerId, name?, enabled?, priority?, streamMode?, config }` |
-| GET/PATCH/DELETE | `/sources/:id` | PATCH merges `config`. For secrets: omit or `""` keeps the value, `null` clears it. Secret values are never returned; `config.secretsSet` lists which are set. |
-| POST | `/providers/:providerId/test` | `{ config }` → `ConnectionTestResultDto` (test before saving) |
-| POST | `/sources/:id/test` | `{ config? }`: test the saved source, optionally with edited fields; stored secrets fill the gaps |
+| GET/PATCH/DELETE | `/sources/:id` | PATCH merges `config`. For secrets: omit or `""` keeps the value, `null` clears it. Secret values are never returned; `config.secretsSet` lists which are set, and `config.signedInWithDeviceLogin` is true when credentials came from "Log in with …". |
+
+**Device login.** Start the flow, show `userCode` and a link to
+`verificationUrlComplete ?? verificationUrl`, and poll every
+`intervalSeconds` until the status is `complete`. Then send
+`deviceLogin: flowId` with the create, update or test request. The
+credentials are stored server-side, encrypted, and are never returned. A
+flowId is single-use, belongs to the user who started it, and is forgotten
+15 minutes after the code expires.
+| POST | `/providers/:providerId/test` | `{ config, deviceLogin? }` → `ConnectionTestResultDto` (test before saving) |
+| POST | `/sources/:id/test` | `{ config?, deviceLogin? }`: test the saved source, optionally with edited fields; stored secrets fill the gaps |
+| POST | `/providers/:providerId/device-login` | Start "Log in with …" (providers whose `configSchema.deviceLogin` is set) → `DeviceFlowStartDto` `{ flowId, userCode, verificationUrl, verificationUrlComplete?, expiresAt, intervalSeconds }`. Rate-limited. |
+| GET | `/device-login/:flowId` | Poll → `{ status: 'pending' \| 'complete' \| 'expired' \| 'denied' }`. Calls the service at most once per `intervalSeconds`. |
 | POST | `/sources/:id/scan`, `/scan` | Queue a rescan of one source or all → `ScanStatusDto` (202) |
 | GET | `/scan/status` | `ScanStatusDto`: running scan, queue, pending matches, recent reports |
 
-`streamMode: "redirect"` is rejected with 422 for providers whose links always
-carry credentials (LocalFolder, Subsonic).
+`streamMode: "redirect"` is rejected with 422 for providers whose links carry
+credentials: LocalFolder, Subsonic, and all debrid services (whose links are
+bearer- and IP-bound). Of the built-ins, only Internet Archive can redirect.
+
+**Stream failures.** If a source answers with an error, or with an HTML,
+JSON or XML document instead of audio, the server fetches a fresh link once
+and retries. If that also fails, it returns 502/404 with a message naming
+the source, e.g. `"Navidrome" couldn't stream this file: it returned HTTP
+403, even after getting a fresh link.`
 
 ## Fix match (admin)
 

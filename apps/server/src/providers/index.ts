@@ -1,9 +1,9 @@
 import { createDebridPlugin } from './debrid/index.js';
-import { allDebridAdapter } from './debrid/adapters/alldebrid/index.js';
-import { premiumizeAdapter } from './debrid/adapters/premiumize/index.js';
-import { realDebridAdapter } from './debrid/adapters/real-debrid/index.js';
-import { torBoxAdapter } from './debrid/adapters/torbox/index.js';
-import { internetArchivePlugin } from './internet-archive/index.js';
+import { createAllDebridAdapter } from './debrid/adapters/alldebrid/index.js';
+import { createPremiumizeAdapter } from './debrid/adapters/premiumize/index.js';
+import { createRealDebridAdapter } from './debrid/adapters/real-debrid/index.js';
+import { createTorBoxAdapter } from './debrid/adapters/torbox/index.js';
+import { createInternetArchivePlugin } from './internet-archive/index.js';
 import { localFolderPlugin } from './local-folder/index.js';
 import { ProviderRegistry } from './registry.js';
 import { subsonicPlugin } from './subsonic/index.js';
@@ -16,19 +16,28 @@ export { ResolveCache } from './resolve-cache.js';
 export { createDebridPlugin } from './debrid/index.js';
 export type * from './debrid/types.js';
 
-/** Built-in plugins, in the order they appear in "Add source". */
-export const builtinPlugins: readonly ProviderPlugin[] = [
-  localFolderPlugin,
-  subsonicPlugin,
-  internetArchivePlugin,
-  createDebridPlugin(realDebridAdapter),
-  createDebridPlugin(allDebridAdapter),
-  createDebridPlugin(torBoxAdapter),
-  createDebridPlugin(premiumizeAdapter),
-];
+export interface BuiltinOptions {
+  /** Registered Premiumize OAuth client id; enables "Log in with Premiumize". */
+  premiumizeClientId?: string | null;
+}
 
-export function createDefaultRegistry(): ProviderRegistry {
+/** Built-in plugins, in the order they appear in "Add source". */
+export function createBuiltinPlugins(opts: BuiltinOptions = {}): ProviderPlugin[] {
+  return [
+    localFolderPlugin,
+    subsonicPlugin,
+    createInternetArchivePlugin(),
+    createDebridPlugin(createRealDebridAdapter()),
+    createDebridPlugin(createAllDebridAdapter()),
+    createDebridPlugin(createTorBoxAdapter()),
+    createDebridPlugin(createPremiumizeAdapter({ clientId: opts.premiumizeClientId ?? null })),
+  ] as ProviderPlugin[];
+}
+
+export const builtinPlugins: readonly ProviderPlugin[] = createBuiltinPlugins();
+
+export function createDefaultRegistry(opts: BuiltinOptions = {}): ProviderRegistry {
   const registry = new ProviderRegistry();
-  for (const plugin of builtinPlugins) registry.register(plugin);
+  for (const plugin of createBuiltinPlugins(opts)) registry.register(plugin);
   return registry;
 }

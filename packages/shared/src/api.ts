@@ -50,10 +50,14 @@ export interface ConnectionTestResultDto {
 }
 
 /** Device/PIN flow handshake returned to the client to display. */
+/** POST /api/providers/:providerId/device-login — show `userCode` and `verificationUrl` to the user. */
 export interface DeviceFlowStartDto {
+  /** Pass to the poll endpoint, then as `deviceLogin` when saving/testing the source. */
   flowId: string;
   userCode: string;
   verificationUrl: string;
+  /** Same page with the code prefilled, when the service supports it. */
+  verificationUrlComplete?: string;
   expiresAt: string;
   intervalSeconds: number;
 }
@@ -272,6 +276,8 @@ export interface SourceWriteDto {
   priority?: number;
   streamMode?: StreamMode;
   config?: Record<string, unknown>;
+  /** flowId of a completed "Log in with…" flow; its credentials are stored with the source. */
+  deviceLogin?: string;
 }
 
 /** GET /api/match/releases — for album-level "fix match". */

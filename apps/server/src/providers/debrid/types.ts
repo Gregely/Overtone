@@ -10,9 +10,13 @@
  *   - searching indexers or any third-party catalog
  *   - any other "find content" functionality
  *
- * Shared behaviour (audio filtering, credential checks, mapping to the generic
- * SourceProvider interface) lives in the bridge, ./index.ts. Link caching and
- * re-resolution on expiry live in ../resolve-cache.ts and apply to every provider.
+ * Shared behaviour (audio filtering, credential checks, tag probing, mapping
+ * to the generic SourceProvider interface) lives in the bridge, ./index.ts.
+ * Link caching and re-resolution on expiry live in ../resolve-cache.ts and
+ * apply to every provider.
+ *
+ * Debrid links are always proxied by the server: they act as bearer
+ * credentials and are frequently bound to the requesting IP.
  */
 
 import type { CallOptions, DeviceFlowHandler, ProviderContext, ResolveOptions } from '../types.js';
@@ -30,8 +34,10 @@ export interface DebridAdapterDefinition {
    * UI and written via ctx.updateSecrets() or a completed device flow.
    */
   managedSecrets?: readonly string[];
-  /** OAuth device / PIN flow, where the service supports one. */
+  /** OAuth device / PIN flow, where the service officially supports one ("Log in with …"). */
   deviceFlow?: DeviceFlowHandler;
+  /** Shown under the "Log in with …" button. */
+  deviceLoginHelp?: string;
   /**
    * Fallback link lifetime when the service doesn't report one. Links are
    * re-resolved shortly before this elapses. Default: 1 hour.
@@ -81,16 +87,12 @@ export interface DebridResolvedLink {
   headers?: Record<string, string>;
   mimeType?: string;
   size?: number;
-  /**
-   * Whether the link may be handed to a client. Default false. Set true only
-   * if the URL carries no API key / account token (many unrestricted links are
-   * account- or IP-bound; when in doubt, leave false so the server proxies).
-   */
-  redirectSafe?: boolean;
 }
 
 export interface DebridAccountInfo {
   username?: string;
   premium: boolean;
   premiumUntil?: Date;
+  /** Human-readable plan name, e.g. "Premium", "Pro". */
+  plan?: string;
 }

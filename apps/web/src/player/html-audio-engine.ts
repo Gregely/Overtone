@@ -32,7 +32,8 @@ export class HtmlAudioEngine implements PlayerEngine {
       };
       on('playing', () => this.#emit({ type: 'playing' }));
       on('pause', () => {
-        if (!el.ended) this.#emit({ type: 'paused' });
+        // Ignore stale pause events (e.g. from the priming clip) once a real track is playing.
+        if (!el.ended && el.paused) this.#emit({ type: 'paused' });
       });
       on('waiting', () => this.#emit({ type: 'waiting' }));
       on('timeupdate', () => this.#emit({ type: 'time', position: el.currentTime, duration: el.duration || 0 }));
@@ -74,7 +75,10 @@ export class HtmlAudioEngine implements PlayerEngine {
       if (el.getAttribute('src')) continue;
       el.src = SILENCE;
       el.play().then(
-        () => el.pause(),
+        // The real track may already have been loaded onto this element: only stop the silence.
+        () => {
+          if (el.src === SILENCE) el.pause();
+        },
         () => undefined,
       );
     }

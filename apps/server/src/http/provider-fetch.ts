@@ -29,9 +29,9 @@ export function createProviderFetch(opts: ProviderFetchOptions): ProviderFetch {
   const sleep = opts.sleep ?? sleepReal;
 
   return async (input, init = {}) => {
-    const { timeoutMs = opts.defaultTimeoutMs ?? 20_000, ...rest } = init;
+    const { timeoutMs = opts.defaultTimeoutMs ?? 20_000, idempotent: declared, ...rest } = init;
     const method = (rest.method ?? 'GET').toUpperCase();
-    const idempotent = method === 'GET' || method === 'HEAD';
+    const idempotent = declared ?? (method === 'GET' || method === 'HEAD');
     const headers = new Headers(rest.headers);
     if (!headers.has('user-agent')) headers.set('user-agent', opts.userAgent);
 

@@ -11,8 +11,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildApp } from '../app.js';
 import { DEFAULT_CORS_ORIGINS } from '../config.js';
+import { createDebridPlugin } from '../providers/debrid/index.js';
+import { createRealDebridAdapter } from '../providers/debrid/adapters/real-debrid/index.js';
+import { createBuiltinPlugins } from '../providers/index.js';
+import { ProviderRegistry } from '../providers/registry.js';
 import { makeMp3 } from './audio-fixtures.js';
 import { credit, FakeMusicBrainz, release } from './fake-musicbrainz.js';
+import { startFakeServices } from './fake-services.js';
 
 const port = Number(process.env.E2E_PORT ?? 4810);
 const webDir = path.resolve(process.env.OVERTONE_WEB_DIR ?? 'apps/web/dist');
@@ -48,9 +53,21 @@ const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mOM2W/xHwAFgAJ/l1MqowAAAABJRU5ErkJggg==',
   'base64',
 );
-const fakeFetch: typeof fetch = async (input) => {
+// Fake Subsonic + Real-Debrid on the next port; the real adapters talk to them.
+const fakes = await startFakeServices(port + 1);
+const registry = new ProviderRegistry();
+for (const plugin of createBuiltinPlugins()) {
+  registry.register(
+    plugin.manifest.id === 'real-debrid'
+      ? createDebridPlugin(createRealDebridAdapter({ apiBase: `${fakes.base}/rd/rest/1.0`, oauthBase: `${fakes.base}/rd/oauth/v2` }))
+      : plugin,
+  );
+}
+
+const fakeFetch: typeof fetch = async (input, init) => {
   const url = String(input);
   if (url.startsWith('https://coverartarchive.org/')) return new Response(PNG, { headers: { 'content-type': 'image/png' } });
+  if (url.startsWith(fakes.base)) return fetch(input, init);
   throw new TypeError(`fetch failed (e2e server has no network): ${url}`);
 };
 
@@ -69,16 +86,19 @@ const { app, services } = await buildApp({
     logLevel: process.env.E2E_LOG_LEVEL ?? 'warn',
     trustProxy: false,
     version: 'e2e',
+    premiumizeClientId: null,
   },
   mb: new FakeMusicBrainz([albumOne]),
   fetch: fakeFetch,
+  registry,
 });
 await app.listen({ host: '127.0.0.1', port });
 services.startBackground();
-console.log(`e2e server on http://127.0.0.1:${port} (web: ${webDir}, data: ${root})`);
+console.log(`e2e server on http://127.0.0.1:${port} (web: ${webDir}, data: ${root}, fake services: ${fakes.base})`);
 
 const stop = async () => {
   await app.close();
+  await fakes.close();
   rmSync(root, { recursive: true, force: true });
   process.exit(0);
 };

@@ -12,8 +12,15 @@ import type { SourceManager } from '../sources/manager.js';
 import type { SourceFileRow } from '../library/repo.js';
 import { parseRange } from './range.js';
 
-/** Upstream statuses that mean "this link is dead", triggering one re-resolve. */
-const DEAD_LINK = new Set([401, 403, 404, 410]);
+/** Content types that are never audio: an error document from the source. */
+const NOT_AUDIO = /^(text\/|application\/(json|xml|problem\+json|xhtml\+xml))/i;
+
+/** Any upstream error except "range not satisfiable", or a non-audio body. */
+function failed(res: Response): boolean {
+  if (res.status === 416) return false;
+  if (!res.ok) return true;
+  return NOT_AUDIO.test(res.headers.get('content-type') ?? '');
+}
 
 /** Response headers relayed from upstream when proxying. Everything else is dropped. */
 const RELAY_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag'];
@@ -45,8 +52,11 @@ export class StreamService {
       return reply.code(302).header('cache-control', 'no-store').header('location', stream.url).send();
     }
 
+    // A failed or non-audio response means the link died (expired, IP-bound,
+    // revoked) or the source answered with an error document: resolve a fresh
+    // link once and retry, then give up with a clear message.
     let upstream = await this.#fetchUpstream(stream, req, signal);
-    if (DEAD_LINK.has(upstream.status)) {
+    if (failed(upstream)) {
       await upstream.body?.cancel();
       this.d.resolver.invalidate(source.id, file.file_id);
       stream = await resolve(true);
@@ -56,10 +66,15 @@ export class StreamService {
       await upstream.body?.cancel();
       return reply.code(416).header('content-range', upstream.headers.get('content-range') ?? 'bytes */*').send();
     }
-    if (!upstream.ok || !upstream.body) {
+    if (failed(upstream) || !upstream.body) {
       await upstream.body?.cancel();
-      const code = DEAD_LINK.has(upstream.status) ? 'not_found' : 'unavailable';
-      throw new ProviderError(code, `Source returned HTTP ${upstream.status}`);
+      this.d.resolver.invalidate(source.id, file.file_id);
+      const status = upstream.status;
+      const why = !upstream.ok
+        ? `HTTP ${status}`
+        : `an error page instead of audio (${upstream.headers.get('content-type')?.split(';')[0] ?? 'unknown type'})`;
+      const code = status === 404 || status === 410 ? 'not_found' : status === 401 || status === 403 ? 'auth' : 'unavailable';
+      throw new ProviderError(code, `"${source.name}" couldn't stream this file: it returned ${why}, even after getting a fresh link.`);
     }
 
     reply.code(upstream.status === 206 ? 206 : 200);

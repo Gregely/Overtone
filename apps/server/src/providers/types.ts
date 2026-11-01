@@ -40,7 +40,10 @@ export interface ProviderManifest {
   /** Declarative settings form; validated before create() is called. */
   configSchema: ConfigSchema;
   capabilities?: ProviderCapabilities;
-  /** Supports an OAuth device / PIN flow (see DeviceFlowHandler). */
+  /**
+   * Supports an OAuth device / PIN flow. Must be set together with
+   * `configSchema.deviceLogin` (which tells the UI what to render).
+   */
   deviceFlow?: DeviceFlowHandler;
 }
 
@@ -255,6 +258,8 @@ export interface DeviceFlowStart {
   handle: string;
   userCode: string;
   verificationUrl: string;
+  /** Verification page with the code prefilled, when the service offers one. */
+  verificationUrlComplete?: string;
   expiresAt: Date;
   intervalSeconds: number;
 }
@@ -288,7 +293,14 @@ export interface ProviderContext {
   updateSecrets(patch: Record<string, string>): Promise<void>;
 }
 
-export type ProviderFetch = (input: string | URL, init?: RequestInit & { timeoutMs?: number }) => Promise<Response>;
+export type ProviderFetch = (
+  input: string | URL,
+  init?: RequestInit & {
+    timeoutMs?: number;
+    /** Allow retry/backoff for a non-GET request that has no side effects (e.g. a read-only POST). */
+    idempotent?: boolean;
+  },
+) => Promise<Response>;
 
 export interface ProviderLogger {
   debug(msg: string, data?: Record<string, unknown>): void;

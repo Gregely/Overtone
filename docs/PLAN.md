@@ -84,8 +84,9 @@ overtone/
     │           ├── resolve-cache.ts   # expiry-aware stream resolution cache (stage 1)
     │           ├── index.ts       # built-in plugin list (stage 1)
     │           ├── local-folder/  # stage 2
-    │           ├── subsonic/      # stage 4
-    │           ├── internet-archive/  # stage 4
+    │           ├── http.ts        # adapter helpers: network errors, JSON, forms (stage 4)
+    │           ├── subsonic/      # Subsonic / OpenSubsonic (stage 4)
+    │           ├── internet-archive/  # archive.org, CC/PD only (stage 4)
     │           └── debrid/
     │               ├── types.ts       # ★ DebridAdapter interface (stage 1)
     │               ├── index.ts       # adapter → SourceProvider bridge (stage 1)
@@ -184,7 +185,7 @@ interface DebridAdapter {
 }
 interface DebridAdapterDefinition {
   id, name, website,
-  deviceFlow?: DebridDeviceFlow;       // RD / AllDebrid PIN / Premiumize, where supported
+  deviceFlow?: DeviceFlowHandler;      // "Log in with …", where the service officially supports one
   create(credentials, ctx): DebridAdapter;
 }
 ```
@@ -359,6 +360,69 @@ mounted read-only.
 
 ---
 
+## 4b. Remaining providers (Stage 4 — built)
+
+Every adapter starts with a comment naming the official docs it was built
+from and the date they were checked (2026-11-01). Adapters only use
+documented endpoints. Tests use fixtures shaped like the documented
+responses: success, bad key, expired key/token, 429 with backoff, network
+failure, and an empty account.
+
+| Provider | Lists | Resolves | Login | Streams |
+|---|---|---|---|---|
+| **Subsonic / OpenSubsonic** | OpenSubsonic: `search3` with an empty query, 500/page. Classic: `getAlbumList2` (500/page) + `getAlbum` | `/rest/stream?format=raw` | Salted token `t = md5(password+salt)` with a fresh salt per request, or an OpenSubsonic `apiKey`. Never `p=` | Proxy only (credentials are in the URL) |
+| **Internet Archive** | Scrape API (`count` ≥ 100, `cursor`) over the configured collection/query, then `/metadata/{id}` (cached 7 days, 300 ms between items) | `/download/{id}/{file}` | none | Redirect allowed (public URL) |
+| **Real-Debrid** | `/torrents` (status `downloaded`) + `/torrents/info` (cached), `/downloads` | `/unrestrict/link` on the torrent's own link; filename verified | Official device flow for open-source apps (`X245A4XAIBGVM`), auto token refresh | Proxy only |
+| **AllDebrid** | `/v4.1/magnet/status` (ready) + `/v4/magnet/files`, `/v4/user/links` | `/v4/link/unlock` on the account's own link (+ delayed links) | PIN flow (`/v4.1/pin/get`, `/v4/pin/check`) | Proxy only |
+| **TorBox** | `/{torrents,usenet,webdl}/mylist` (finished) | `/{kind}/requestdl` (valid 3 h) | Device code (`/user/auth/device/start` → `/token`) | Proxy only |
+| **Premiumize** | `/item/listall` | `/item/details` → `link` | Device code only with a *registered* client id (`OVERTONE_PREMIUMIZE_CLIENT_ID`); otherwise API key | Proxy only |
+
+**Read-only by construction.**
+- No adapter or interface has add, search, upload or save methods.
+- `resolveLink` only accepts ids the adapter produced from the user's
+  account. An arbitrary URL can never be unrestricted.
+- Tests assert that listing only makes reads, and that unknown ids never
+  reach the unlock/unrestrict endpoints.
+- Internet Archive checks each item's licence twice: in the search hit and
+  in the item metadata. Only `creativecommons.org/licenses|publicdomain/…`
+  passes.
+
+**"Log in with …" is a generic schema feature.** Any provider's
+`configSchema` may declare `deviceLogin: { label, help, replaces }` together
+with a `manifest.deviceFlow` handler; the registry enforces the pairing. The
+server runs the flow:
+
+1. `POST /api/providers/:id/device-login` returns a flowId, the user code
+   and the verification URL. The provider's handle stays on the server.
+2. `GET /api/device-login/:flowId` polls, throttled to the provider's
+   interval.
+3. The flowId goes with `POST /api/sources`, `PATCH /api/sources/:id` or a
+   test request.
+
+The resulting credentials are written into the `replaces` secret fields and
+never reach the browser. Pasting a new key clears credentials from an
+earlier login. `config.signedInWithDeviceLogin` tells the UI a source is
+signed in.
+
+**Debrid links are always proxied.** The bridge marks every debrid
+resolution `redirectSafe: false`, and debrid manifests aren't
+`redirectable`. Links act as bearer credentials and are often tied to the
+requesting IP. Links are cached through `ResolveCache` until shortly before
+their `expiresAt` (TorBox: 3 h; others: 1 h default).
+
+**Streaming hardening.**
+- Any upstream error (except 416), or a 2xx response with an HTML, JSON or
+  XML body (a Subsonic error document or a debrid error page), invalidates
+  the cached link. The server re-resolves once with `forceRefresh`, then
+  fails with a message naming the source, e.g. `"Navidrome" couldn't stream
+  this file: it returned HTTP 403, even after getting a fresh link.`
+- Read-only POSTs (debrid status/unlock calls) are marked `idempotent`, so
+  429/503 responses get the same Retry-After backoff as GETs.
+
+**Tags for debrid files** come from a 256 KB range probe of the resolved
+link. This is on by default and can be switched off per source ("Read tags
+from files"), in which case folder and file names are used.
+
 ## 5. Web client (Stage 3 — built)
 
 React 19 + Vite 8 + React Router 8 (declarative routes) + TanStack Query.
@@ -498,7 +562,7 @@ indicator with scan progress, then matching progress, then "N to review".
 | 1 | Folder structure, plan, provider + debrid interfaces, config schema/validator, registry, debrid bridge, resolve cache, tests | ✅ |
 | 2 | DB schema & migrations, auth, crypto, MusicBrainz/CAA, matcher, scanner, LocalFolder, streaming, Docker | ✅ |
 | 3 | Web app: setup/login, library, search, album, player (link refresh), Media Session, PWA/offline, Sources UI, fix match, themes, a11y, e2e | ✅ |
-| 4 | Subsonic, Internet Archive, Real-Debrid/AllDebrid/TorBox/Premiumize adapters, Settings > Sources (+ test connection, device flow) | |
+| 4 | Subsonic, Internet Archive, Real-Debrid/AllDebrid/TorBox/Premiumize adapters, generic "Log in with…", stream hardening, e2e with fake services | ✅ |
 | 5 | Capacitor Android: NativePlayer plugin, notification, focus, secure storage, docs | |
 | 6 | Polish, test coverage, README/docs | |
 

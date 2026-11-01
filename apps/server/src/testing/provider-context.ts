@@ -2,16 +2,22 @@
  * Test helper for provider authors: a ProviderContext with an in-memory state
  * store, a recording logger, and an injectable fetch (no network by default).
  */
+import { createProviderFetch } from '../http/provider-fetch.js';
 import type { ProviderContext, ProviderFetch, ProviderLogger } from '../providers/types.js';
 
 export interface TestProviderContext extends ProviderContext {
   logs: Array<{ level: keyof ProviderLogger; msg: string; data?: Record<string, unknown> }>;
   stateData: Map<string, unknown>;
   secretUpdates: Array<Record<string, string>>;
+  /** Backoff delays requested by the retrying fetch (when `retries` is on). */
+  delays: number[];
 }
 
-export function createTestContext(opts: { fetch?: ProviderFetch; sourceId?: string } = {}): TestProviderContext {
+export function createTestContext(
+  opts: { fetch?: ProviderFetch | typeof fetch; sourceId?: string; /** Wrap fetch in the real retry/backoff layer (fake clock). */ retries?: boolean } = {},
+): TestProviderContext {
   const logs: TestProviderContext['logs'] = [];
+  const delays: number[] = [];
   const stateData = new Map<string, unknown>();
   const secretUpdates: Array<Record<string, string>> = [];
   const log =
@@ -20,17 +26,27 @@ export function createTestContext(opts: { fetch?: ProviderFetch; sourceId?: stri
       logs.push(data ? { level, msg, data } : { level, msg });
     };
 
+  const logger = { debug: log('debug'), info: log('info'), warn: log('warn'), error: log('error') };
+  const base: ProviderFetch =
+    (opts.fetch as ProviderFetch | undefined) ??
+    (async (input) => {
+      throw new Error(`Unexpected network request in test: ${String(input)}`);
+    });
   return {
     sourceId: opts.sourceId ?? 'test-source',
     logs,
     stateData,
     secretUpdates,
-    logger: { debug: log('debug'), info: log('info'), warn: log('warn'), error: log('error') },
-    fetch:
-      opts.fetch ??
-      (async (input) => {
-        throw new Error(`Unexpected network request in test: ${String(input)}`);
-      }),
+    delays,
+    logger,
+    fetch: opts.retries
+      ? createProviderFetch({
+          userAgent: 'Overtone/test',
+          logger,
+          fetch: base as unknown as typeof fetch,
+          sleep: async (ms) => void delays.push(ms),
+        })
+      : base,
     state: {
       get: <T>(key: string) => stateData.get(key) as T | undefined,
       set: (key, value) => void stateData.set(key, value),

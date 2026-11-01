@@ -126,10 +126,12 @@ export function useDeleteSource() {
 export function useTestSource() {
   const api = useApi();
   return useMutation({
-    mutationFn: ({ id, providerId, config }: { id?: string; providerId: string; config: Record<string, unknown> }) =>
-      id
-        ? api.post<ConnectionTestResultDto>(`/api/sources/${id}/test`, { config })
-        : api.post<ConnectionTestResultDto>(`/api/providers/${providerId}/test`, { config }),
+    mutationFn: ({ id, providerId, config, deviceLogin }: { id?: string; providerId: string; config: Record<string, unknown>; deviceLogin?: string }) => {
+      const body = { config, ...(deviceLogin ? { deviceLogin } : {}) };
+      return id
+        ? api.post<ConnectionTestResultDto>(`/api/sources/${id}/test`, body)
+        : api.post<ConnectionTestResultDto>(`/api/providers/${providerId}/test`, body);
+    },
   });
 }
 
