@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+.env
+.env.*
+!.env.example
+data/
+*.sqlite
+*.sqlite-*
+*.db
+.DS_Store
+# Capacitor / Android build outputs (stage 5)
+apps/web/android/app/build/
+apps/web/android/.gradle/
+apps/web/android/local.properties
