@@ -1,15 +1,32 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
+const shared = fileURLToPath(new URL('./packages/shared/src/index.ts', import.meta.url));
+
 export default defineConfig({
   resolve: {
-    alias: {
-      // Tests run against shared sources directly; no build step needed.
-      '@overtone/shared': fileURLToPath(new URL('./packages/shared/src/index.ts', import.meta.url)),
-    },
+    // Tests run against shared sources directly; no build step needed.
+    alias: { '@overtone/shared': shared },
   },
   test: {
-    include: ['packages/*/src/**/*.test.ts', 'apps/*/src/**/*.test.ts'],
-    environment: 'node',
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'node',
+          include: ['packages/*/src/**/*.test.ts', 'apps/server/src/**/*.test.ts'],
+          environment: 'node',
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'web',
+          include: ['apps/web/src/**/*.test.{ts,tsx}'],
+          environment: 'jsdom',
+          setupFiles: ['apps/web/src/test/setup.ts'],
+        },
+      },
+    ],
   },
 });

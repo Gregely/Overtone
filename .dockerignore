@@ -7,3 +7,5 @@ coverage
 .env
 .env.*
 apps/web/android
+apps/web/test-results
+apps/web/playwright-report

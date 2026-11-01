@@ -176,9 +176,9 @@ describe('local folder library', () => {
     expect(report).toMatchObject({ added: 2, removed: 0, error: null });
 
     const home = (await h.app.inject({ url: '/api/library/home', headers: h.auth })).json();
-    expect(home.stats).toEqual({ artists: 1, albums: 1, tracks: 2, pendingMatches: 0 });
+    expect(home.stats).toEqual({ artists: 1, albums: 1, tracks: 2, pendingMatches: 0, needsReview: 0, unmatched: 0 });
     const album = home.recentlyAdded[0];
-    expect(album).toMatchObject({ title: 'Homework', mbid: homework.id, artistCredit: 'Daft Punk', trackCount: 2 });
+    expect(album).toMatchObject({ title: 'Homework', mbid: homework.id, artistCredit: 'Daft Punk', trackCount: 2, attention: 0 });
     expect(album.coverUrl).toMatch(/^\/api\/artwork\/release\/\d+\?at=/);
 
     const detail = (await h.app.inject({ url: `/api/library/albums/${album.id}`, headers: h.auth })).json();
@@ -187,6 +187,7 @@ describe('local folder library', () => {
       [4, 'Da Funk'],
     ]);
     expect(detail.tracks[0].sources).toEqual([{ sourceId: src.id, sourceName: 'Music', providerId: 'local-folder', category: 'local' }]);
+    expect(detail.tracks.map((t: { matchStatus: string }) => t.matchStatus)).toEqual(['matched', 'matched']);
 
     const search = (await h.app.inject({ url: '/api/search?q=funk', headers: h.auth })).json();
     expect(search.tracks.map((t: { title: string }) => t.title)).toEqual(['Da Funk']);
@@ -258,6 +259,21 @@ describe('local folder library', () => {
     expect(moved.statusCode).toBe(200);
     expect(moved.json().album).toMatchObject({ title: 'Homework (25th Anniversary)', mbid: reissue.id, trackCount: 2 });
     expect((await h.app.inject({ url: '/api/library/albums', headers: h.auth })).json().total).toBe(1);
+  });
+
+  it('shows unmatched files from their tags with a match status and review counts', async () => {
+    h = await createHarness({ mb: new FakeMusicBrainz([]) }); // MusicBrainz knows nothing
+    const src = h.services.sources.create({ providerId: 'local-folder', config: { path: music, watch: false } });
+    await scanAndMatch(src.id);
+    const albums = (await h.app.inject({ url: '/api/library/albums', headers: h.auth })).json().items;
+    expect(albums).toMatchObject([{ title: 'Homework', mbid: null, attention: 2 }]);
+    const tracks = (await h.app.inject({ url: '/api/library/tracks', headers: h.auth })).json().items;
+    expect(tracks.map((t: { matchStatus: string; title: string }) => [t.title, t.matchStatus])).toEqual([
+      ['Da Funk', 'unmatched'],
+      ['Revolution 909', 'unmatched'],
+    ]);
+    const status = (await h.app.inject({ url: '/api/scan/status', headers: h.auth })).json();
+    expect(status.matching).toMatchObject({ pending: 0, unmatched: 2, needsReview: 0 });
   });
 
   it('removes deleted files and keeps everything when a listing comes back empty', async () => {
@@ -395,5 +411,36 @@ describe('artwork', () => {
     expect(String(fetch.mock.calls[0]![0])).toBe(`https://coverartarchive.org/release/${rel.id}/front-250`);
 
     expect((await h.app.inject({ url: `/api/artwork/release/${album.id}` })).statusCode).toBe(401);
+  });
+});
+
+// ── Web app hosting ────────────────────────────────────────────────────────
+
+describe('web app hosting', () => {
+  it('serves the SPA with a fallback for deep links, and never for /api', async () => {
+    const web = await mkdtemp(path.join(tmpdir(), 'overtone-web-'));
+    await mkdir(path.join(web, 'assets'));
+    await writeFile(path.join(web, 'index.html'), '<!doctype html><title>Overtone</title>');
+    await writeFile(path.join(web, 'assets', 'app-abc123.js'), 'console.log(1)');
+    await writeFile(path.join(web, 'sw.js'), 'self.x=1');
+    h = await createHarness({ config: { webDir: web } });
+
+    const root = await h.app.inject({ url: '/' });
+    expect(root.statusCode).toBe(200);
+    expect(root.body).toContain('<title>Overtone</title>');
+    const deep = await h.app.inject({ url: '/albums/12?x=1' });
+    expect(deep.body).toContain('<title>Overtone</title>');
+    expect(deep.headers['cache-control']).toBe('no-cache');
+
+    const asset = await h.app.inject({ url: '/assets/app-abc123.js' });
+    expect(asset.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+    expect((await h.app.inject({ url: '/sw.js' })).headers['cache-control']).toBe('no-cache');
+    expect((await h.app.inject({ url: '/assets/missing.js' })).statusCode).toBe(404);
+
+    const api = await h.app.inject({ url: '/api/nope' });
+    expect(api.statusCode).toBe(404);
+    expect(api.json().error.code).toBe('not_found');
+    expect(root.headers['referrer-policy']).toBe('no-referrer');
+    await rm(web, { recursive: true, force: true });
   });
 });

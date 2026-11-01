@@ -14,3 +14,7 @@ data/
 apps/web/android/app/build/
 apps/web/android/.gradle/
 apps/web/android/local.properties
+# Web / e2e
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/dev-dist/

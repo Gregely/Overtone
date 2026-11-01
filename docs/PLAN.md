@@ -94,12 +94,15 @@ overtone/
     │                   ├── alldebrid/
     │                   ├── torbox/
     │                   └── premiumize/
-    └── web/                  # React + Vite PWA (stage 3)
+    └── web/                  # React + Vite PWA (stage 3; see §5)
         ├── src/
-        │   ├── api/               # typed REST client, token refresh
-        │   ├── player/            # PlayerEngine abstraction (HTML audio / native)
-        │   ├── views/             # Home, Library, Search, Album, NowPlaying, Settings
-        │   └── platform/          # web vs Capacitor shims (storage, server URL)
+        │   ├── api/               # typed REST client, token refresh, query hooks
+        │   ├── player/            # queue state machine, controller, engines, Media Session
+        │   ├── session/           # boot / setup / login / unreachable gate
+        │   ├── views/ layout/ ui/ # screens and components
+        │   ├── platform/          # web vs Capacitor shims (storage, server URL)
+        │   └── sw.ts              # service worker
+        ├── e2e/                   # Playwright smoke test
         └── android/          # Capacitor Android project (stage 5)
 ```
 
@@ -356,30 +359,105 @@ mounted read-only.
 
 ---
 
-## 5. Web client (Stage 3)
+## 5. Web client (Stage 3 — built)
 
-- React + Vite + React Router. State lives in a lightweight store (Zustand)
-  plus TanStack Query for API caching. CSS variables give light/dark themes
-  that follow the system setting, with a manual override.
-- **Server URL** is a first-run screen and lives in Settings. It defaults to
-  the page's origin when served by the backend. Stored with the tokens
-  through a `platform/storage` abstraction (localStorage on web, secure
-  storage on Android).
-- **API client:** attaches the access token and refreshes on 401 with a
-  single-flight lock, then retries once.
-- **Player:** a `PlayerEngine` interface with an `HtmlAudioEngine` that uses
-  two `<audio>` elements. The next track is preloaded and started on `ended`
-  (or a few ms before, via `timeupdate`) for gapless-ish transitions. Queue,
-  shuffle (Fisher–Yates that keeps the current track), repeat
-  off/all/one, and seeking through native range support.
-- **Media Session API:** metadata, artwork, and play/pause/next/prev/seek
-  handlers.
-- **PWA:** `vite-plugin-pwa`, a manifest, an app-shell precache, and a
-  runtime cache for artwork. Audio is never cached by the service worker.
-- Views: Home (recent, recently added, random albums), Library
-  (Artists/Albums/Tracks tabs), Search, Album, Artist, Now Playing, and
-  Settings (Server, Account, Sources, Appearance). Source badges appear on
-  track rows.
+React 19 + Vite 8 + React Router 8 (declarative routes) + TanStack Query.
+Global client state lives in two small framework-free stores read with
+`useSyncExternalStore`: the `ApiClient` (server, session, reachability) and
+the `PlayerController`. There is no Redux or Zustand.
+
+```
+apps/web/src/
+  api/client.ts        REST client: tokens, refresh, NetworkError vs ApiError
+  api/hooks.ts         TanStack Query hooks per endpoint
+  platform/            async KeyValueStore (localStorage now, Keystore on Android), server-URL helpers
+  session/session.tsx  boot → unreachable | setup | login | ready
+  player/queue.ts      pure queue state machine (queue, shuffle, repeat)
+  player/controller.ts links, preloading, link refresh, error recovery
+  player/engine.ts     PlayerEngine interface; html-audio-engine.ts implements it
+  player/media-session.ts  lock screen / notification metadata + artwork + actions
+  layout/ ui/ views/   shell, components, screens
+  sw.ts                Workbox service worker (injectManifest)
+```
+
+**Server URL and auth.** On the web the server defaults to the page's
+origin. The login, setup and "can't reach" screens all have an editable
+server field that is validated (`GET /api/auth/status`) before being saved,
+and it's persisted for the Capacitor build. Tokens are stored per server.
+Switching servers or users clears every cached query. Access tokens refresh
+a minute before expiry, single-flight within a tab. Refreshes are serialized
+across tabs with a Web Lock, and storage is re-read first. Refresh tokens
+are single-use, so replaying a token another tab already rotated would make
+the server revoke the session. A `refresh_race` reply adopts the newer token.
+
+**Offline / unreachable.** The service worker precaches the app shell and
+serves `index.html` for routes, so the UI always loads. If the server can't
+be reached at boot, the user sees a "Can't reach the server" screen with
+retry and a server field instead of a blank page. In-app failures show a
+banner or an inline error with retry. `/api` data and audio are never
+cached. Album art is cached cache-first, keyed without its rotating `?at=`
+token.
+
+**Player.**
+- `queue.ts` is pure, with injectable randomness: replace / append /
+  play-next / jump / remove / move / next / prev / ended / shuffle / repeat
+  (off → all → one). Turning shuffle on keeps the current track and the
+  history and shuffles only what's ahead. Turning it off restores the
+  original order.
+- `PlayerController` fetches stream links in batches (current + next two)
+  and caches them until 60 s before expiry. It preloads the next track 30 s
+  before the end into the second `<audio>` element; on `ended` the elements
+  swap ("gapless-ish").
+- **Link refresh:** an engine error (expired token, network drop) evicts the
+  link, fetches a fresh one, and resumes at the same position. Up to 2
+  retries per failure spot. Progress of more than 5 s past the spot resets
+  the budget, so separate expiries in a long track all recover. A track
+  that keeps failing is skipped with an announced notice, or shows an error
+  with "Try again" if it's the last one. Resuming after a long pause swaps
+  in a fresh link before playing.
+- The engine is primed inside the user gesture (silent WAV) for iOS
+  autoplay rules.
+- **Media Session:** title, artist, album, artwork (absolute URLs, 250 and
+  500 px), play/pause/next/prev/seek handlers and position state.
+
+**Views.** Home, Library (albums / artists / tracks with filter + sort in
+the URL), Artist, Album (disc grouping, play/shuffle, fix album match),
+Search, Now Playing (seek, controls, volume, up next with jump/remove),
+Review (needs-review / unmatched queues), and Settings: server, account,
+password, theme, shortcuts, and Sources (list, add via provider picker,
+edit, test, scan, delete). Source forms are generated from `configSchema`.
+Secret inputs are never prefilled: blank keeps the stored value, and
+"Remove" sends `null`.
+
+**Match status.** Tracks carry `matchStatus`. Unmatched and low-confidence
+tracks appear from their tags with a "From tags" / "Check match" badge and a
+"Fix match" action. Albums carry an `attention` count. Admins see a header
+indicator with scan progress, then matching progress, then "N to review".
+
+**Accessibility.**
+- Landmarks, a skip link, and focus moved to the page `<h1>` on navigation.
+- Native `<dialog>` modals.
+- A polite live region announces track changes and player notices.
+- Visible labels everywhere; icon buttons have names; shuffle and repeat
+  expose `aria-pressed`; the seek slider has spoken `aria-valuetext`.
+- Accessible names extend visible text (WCAG 2.5.3, enforced by axe in
+  e2e).
+- 44 px touch targets, `prefers-reduced-motion`, and AA contrast in both
+  themes.
+- Keyboard: Space/K, J/L, Shift+N/P, `/`.
+
+**Tests.**
+- Vitest + Testing Library (jsdom): the queue state machine, the controller
+  with a scriptable fake engine (links, preloading, link refresh/resume,
+  skipping, stale responses), the Now Playing / player bar UI, the API
+  client's token rules, server-URL parsing, and the source-form secret
+  semantics.
+- Playwright smoke test (`npm run test:e2e`) builds the app and drives it
+  against a real server with a generated library and fake MusicBrainz, on a
+  phone and a desktop profile. It covers first-run setup, browsing, playback
+  and Media Session artwork, fix match, sources (test, write-only secrets),
+  sign out / in with server change, and offline shell → unreachable →
+  recovery. axe runs on each main screen.
 
 ## 6. Android (Stage 5)
 
@@ -419,7 +497,7 @@ mounted read-only.
 |---|---|---|
 | 1 | Folder structure, plan, provider + debrid interfaces, config schema/validator, registry, debrid bridge, resolve cache, tests | ✅ |
 | 2 | DB schema & migrations, auth, crypto, MusicBrainz/CAA, matcher, scanner, LocalFolder, streaming, Docker | ✅ |
-| 3 | Web app: library, search, album, player, Media Session, PWA, themes | |
+| 3 | Web app: setup/login, library, search, album, player (link refresh), Media Session, PWA/offline, Sources UI, fix match, themes, a11y, e2e | ✅ |
 | 4 | Subsonic, Internet Archive, Real-Debrid/AllDebrid/TorBox/Premiumize adapters, Settings > Sources (+ test connection, device flow) | |
 | 5 | Capacitor Android: NativePlayer plugin, notification, focus, secure storage, docs | |
 | 6 | Polish, test coverage, README/docs | |

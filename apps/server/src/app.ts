@@ -6,6 +6,7 @@ import type { Config } from './config.js';
 import { requireAuth } from './http/auth-hooks.js';
 import { ApiError } from './http/errors.js';
 import { redactUrl } from './http/redact.js';
+import { registerWebApp } from './http/web-app.js';
 import { PROVIDER_ERROR_HTTP_STATUS, ProviderError } from './providers/errors.js';
 import { accountRoutes, publicAuthRoutes } from './routes/auth.js';
 import { libraryRoutes } from './routes/library.js';
@@ -71,9 +72,18 @@ export async function buildApp(opts: BuildAppOptions): Promise<{ app: FastifyIns
     return send(500, { error: { code: 'internal', message: 'Internal server error' } });
   });
 
-  app.setNotFoundHandler((req, reply) =>
-    reply.code(404).send({ error: { code: 'not_found', message: `No route for ${req.method} ${redactUrl(req.url.split('?')[0]!)}` } }),
-  );
+  // Baseline hardening. no-referrer matters: stream/artwork URLs carry tokens.
+  app.addHook('onSend', async (_req, reply) => {
+    reply.header('x-content-type-options', 'nosniff');
+    reply.header('referrer-policy', 'no-referrer');
+    reply.header('x-frame-options', 'DENY');
+  });
+
+  const spaFallback = await registerWebApp(app, config.webDir);
+  app.setNotFoundHandler((req, reply) => {
+    if (spaFallback?.(req, reply)) return;
+    return reply.code(404).send({ error: { code: 'not_found', message: `No route for ${req.method} ${redactUrl(req.url.split('?')[0]!)}` } });
+  });
 
   app.get('/api/health', async () => ({ ok: true, version: config.version }));
   await app.register(async (pub) => {

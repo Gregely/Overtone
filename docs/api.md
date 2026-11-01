@@ -23,6 +23,7 @@ Provider failures use the codes `provider_auth`, `provider_not_found`,
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | GET | `/health` | public | `{ ok, version }` |
+| GET | `/`, `/*` (non-API) | public | The web app, when `OVERTONE_WEB_DIR` is set (the Docker image sets it). Unknown non-asset paths serve `index.html`. |
 | GET | `/auth/status` | public | `{ setupRequired, multiUser, version }` → show first-run setup if `setupRequired` |
 | POST | `/auth/setup` | public | `{ username, password, deviceName? }` → `AuthTokensDto`. Only works while no users exist. |
 | POST | `/auth/login` | public | Same body → `AuthTokensDto`. Rate-limited to 10/min. |
@@ -46,7 +47,11 @@ Provider failures use the codes `provider_auth`, `provider_not_found`,
 | GET | `/library/tracks/:id` | `TrackDto` |
 | GET | `/search?q=` | `SearchResultDto`: artists, albums and tracks; every word must match |
 
-Every `TrackDto` has `sources[]`, one badge per source the track can play from.
+Every `TrackDto` has `sources[]`, one badge per source the track can play from,
+and a `matchStatus` (the least confident of its files): `unmatched` and
+`needs_review` tracks are shown from their tags and offer "Fix match". Albums
+have an `attention` count of such tracks. `HomeDto.stats` and
+`ScanStatusDto.matching` include `needsReview` and `unmatched` totals.
 `coverUrl` is a relative URL that carries its own token, so it can be used
 directly in `<img>` (append `&size=250|500|1200`; default 500).
 

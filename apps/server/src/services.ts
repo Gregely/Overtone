@@ -109,7 +109,7 @@ export function createServices(
     matchWorker,
     streams,
     covers,
-    matchStatus: () => ({ pending: library.pendingMatchCount(), active: matchWorker.active }),
+    matchStatus: () => ({ pending: library.pendingMatchCount(), active: matchWorker.active, ...library.reviewCounts() }),
     startBackground() {
       ensureDefaultMusicSource(config, sources, logger);
       scanner.start(config.scanIntervalMinutes);

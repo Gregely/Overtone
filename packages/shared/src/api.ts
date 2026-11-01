@@ -147,6 +147,8 @@ export interface AlbumDto {
   /** Relative URL (prefix with the server URL). Carries its own short-lived token; usable in <img>. */
   coverUrl: string | null;
   trackCount: number;
+  /** Tracks on this album whose files are unmatched or need review (shows a "fix match" hint). */
+  attention: number;
 }
 
 export interface TrackDto {
@@ -161,6 +163,11 @@ export interface TrackDto {
   mbid: string | null;
   coverUrl: string | null;
   sources: SourceBadgeDto[];
+  /**
+   * Least-confident match state among the track's files: `unmatched` and
+   * `needs_review` tracks show from their tags and offer "Fix match".
+   */
+  matchStatus: MatchStatus;
 }
 
 export interface AlbumDetailDto {
@@ -176,7 +183,7 @@ export interface ArtistDetailDto {
 export interface HomeDto {
   recentlyAdded: AlbumDto[];
   random: AlbumDto[];
-  stats: { artists: number; albums: number; tracks: number; pendingMatches: number };
+  stats: { artists: number; albums: number; tracks: number; pendingMatches: number; needsReview: number; unmatched: number };
 }
 
 export interface SearchResultDto {
@@ -242,7 +249,7 @@ export interface MatchCandidateDto {
 export interface ScanStatusDto {
   running: { sourceId: string; startedAt: string; filesSeen: number } | null;
   queued: string[];
-  matching: { pending: number; active: boolean };
+  matching: { pending: number; active: boolean; needsReview: number; unmatched: number };
   lastReports: ScanReportDto[];
 }
 

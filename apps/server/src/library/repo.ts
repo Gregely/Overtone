@@ -49,6 +49,7 @@ interface ReleaseRow {
   year: number | null;
   cover_status: string;
   track_count: number;
+  attention: number;
 }
 
 interface TrackRow {
@@ -84,11 +85,16 @@ export interface ViewContext {
 export type AlbumSort = 'name' | 'recent' | 'year' | 'artist' | 'random';
 
 const UNKNOWN_ARTIST = 'Unknown Artist';
+
+/** Higher = less confident. A track shows its least confident file's state. */
+const MATCH_RANK: Record<MatchStatus, number> = { manual: 0, matched: 1, pending: 2, needs_review: 3, unmatched: 4 };
 const MAX_LIMIT = 500;
 
 const RELEASE_SELECT = `
   SELECT r.id, r.mbid, r.title, r.artist_id, a.name AS artist_name, r.artist_credit, r.year, r.cover_status,
-         (SELECT COUNT(*) FROM available_tracks t WHERE t.release_id = r.id) AS track_count
+         (SELECT COUNT(*) FROM available_tracks t WHERE t.release_id = r.id) AS track_count,
+         (SELECT COUNT(DISTINCT t.id) FROM available_tracks t JOIN source_files sf ON sf.track_id = t.id
+           WHERE t.release_id = r.id AND sf.match_status IN ('needs_review', 'unmatched')) AS attention
   FROM releases r LEFT JOIN artists a ON a.id = r.artist_id`;
 
 const RELEASE_AVAILABLE = `EXISTS (SELECT 1 FROM available_tracks t WHERE t.release_id = r.id)`;
@@ -462,7 +468,20 @@ export class LibraryRepo {
            SELECT artist_id FROM available_tracks UNION SELECT r.artist_id FROM releases r WHERE ${RELEASE_AVAILABLE})`,
       ),
       pendingMatches: this.pendingMatchCount(),
+      ...this.reviewCounts(),
     };
+  }
+
+  /** Files on enabled sources that need a human: low-confidence or no match. */
+  reviewCounts(): { needsReview: number; unmatched: number } {
+    const rows = this.db
+      .prepare(
+        `SELECT sf.match_status AS status, COUNT(*) AS n FROM source_files sf JOIN sources s ON s.id = sf.source_id
+         WHERE s.enabled = 1 AND sf.match_status IN ('needs_review', 'unmatched') GROUP BY sf.match_status`,
+      )
+      .all() as Array<{ status: string; n: number }>;
+    const get = (st: string) => rows.find((r) => r.status === st)?.n ?? 0;
+    return { needsReview: get('needs_review'), unmatched: get('unmatched') };
   }
 
   home(view: ViewContext): HomeDto {
@@ -598,6 +617,7 @@ export class LibraryRepo {
       year: r.year,
       coverUrl: this.#coverUrl(r.id, r.cover_status, view),
       trackCount: r.track_count,
+      attention: r.attention,
     };
   }
 
@@ -610,6 +630,14 @@ export class LibraryRepo {
          WHERE s.enabled = 1 AND sf.track_id IN (${ids.map(() => '?').join(',')}) ORDER BY s.priority`,
       )
       .all(...ids) as Array<{ track_id: number; id: string; name: string; provider_id: string }>;
+    const statuses = this.db
+      .prepare(`SELECT track_id, match_status FROM source_files WHERE track_id IN (${ids.map(() => '?').join(',')})`)
+      .all(...ids) as Array<{ track_id: number; match_status: MatchStatus }>;
+    const statusByTrack = new Map<number, MatchStatus>();
+    for (const r of statuses) {
+      const prev = statusByTrack.get(r.track_id);
+      if (!prev || MATCH_RANK[r.match_status] > MATCH_RANK[prev]) statusByTrack.set(r.track_id, r.match_status);
+    }
     const byTrack = new Map<number, SourceBadgeDto[]>();
     for (const s of sources) {
       const list = byTrack.get(s.track_id) ?? [];
@@ -628,6 +656,7 @@ export class LibraryRepo {
       mbid: r.recording_mbid,
       coverUrl: this.#coverUrl(r.release_id, r.cover_status, view),
       sources: byTrack.get(r.id) ?? [],
+      matchStatus: statusByTrack.get(r.id) ?? 'pending',
     }));
   }
 }

@@ -13,7 +13,7 @@ import type { Db } from '../db/index.js';
 import { ApiError } from '../http/errors.js';
 import { createProviderFetch } from '../http/provider-fetch.js';
 import { createRedactingLogger, type BaseLogger } from '../http/redact.js';
-import { ProviderError } from '../providers/errors.js';
+import { NotImplementedError, ProviderError } from '../providers/errors.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ProviderContext, ProviderPlugin, SourceProvider } from '../providers/types.js';
 
@@ -224,16 +224,17 @@ export class SourceManager {
     const secrets = { ...existing, ...result.secrets };
     for (const k of result.clearedSecrets) delete secrets[k];
     const tempRow: SourceRow = row ?? ({ id: 'test', provider_id: providerId } as SourceRow);
-    const provider = plugin.create({ ...result.values, ...secrets }, this.#context(tempRow, () => Object.values(secrets), true));
+    let provider: SourceProvider | undefined;
     try {
+      provider = plugin.create({ ...result.values, ...secrets }, this.#context(tempRow, () => Object.values(secrets), true));
       if (!provider.testConnection) return { ok: true, message: 'Configuration is valid.' };
       return await provider.testConnection({ signal: AbortSignal.timeout(30_000) });
     } catch (err) {
-      if (err instanceof ProviderError) return { ok: false, message: err.message };
+      if (err instanceof ProviderError || err instanceof NotImplementedError) return { ok: false, message: err.message };
       if ((err as Error).name === 'TimeoutError') return { ok: false, message: 'Timed out' };
       throw err;
     } finally {
-      await provider.dispose?.();
+      await provider?.dispose?.();
     }
   }
 

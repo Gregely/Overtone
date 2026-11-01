@@ -11,5 +11,5 @@
       "@overtone/shared": ["./packages/shared/src/index.ts"]
     }
   },
-  "include": ["packages/*/src", "apps/*/src", "vitest.config.ts"]
+  "include": ["packages/*/src", "apps/server/src", "vitest.config.ts"]
 }
