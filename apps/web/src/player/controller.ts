@@ -1,5 +1,5 @@
 import type { SourceBadgeDto, TrackDto } from '@overtone/shared';
-import type { EngineEvent, PlayerEngine } from './engine';
+import type { EngineEvent, PlayerEngine, TrackMetadata } from './engine';
 import {
   currentItem,
   emptyQueue,
@@ -51,6 +51,19 @@ export interface PlayerControllerOptions {
   maxRefreshes?: number;
   /** Start buffering the next track this many seconds before the end. */
   preloadSeconds?: number;
+  /** Absolute artwork URL for a track (for the OS media notification / lock screen). */
+  artworkUrl?: (track: TrackDto) => string | null;
+}
+
+/** A queue snapshot that survives an app restart (see persistence.ts). */
+export interface SavedQueue {
+  version: 1;
+  tracks: TrackDto[];
+  order: number[];
+  cursor: number;
+  shuffle: boolean;
+  repeat: QueueState['repeat'];
+  position: number;
 }
 
 class TrackUnavailableError extends Error {}
@@ -73,6 +86,7 @@ export class PlayerController {
   readonly #margin: number;
   readonly #maxRefreshes: number;
   readonly #preloadSeconds: number;
+  readonly #artworkUrl: (track: TrackDto) => string | null;
   readonly #links = new Map<number, StreamLink>();
   readonly #listeners = new Set<() => void>();
   readonly #unsubscribeEngine: () => void;
@@ -106,6 +120,7 @@ export class PlayerController {
     this.#margin = opts.linkMarginMs ?? 60_000;
     this.#maxRefreshes = opts.maxRefreshes ?? 2;
     this.#preloadSeconds = opts.preloadSeconds ?? 30;
+    this.#artworkUrl = opts.artworkUrl ?? (() => null);
     this.#unsubscribeEngine = this.#engine.subscribe((e) => this.#onEngine(e));
   }
 
@@ -235,6 +250,39 @@ export class PlayerController {
     this.#engine.destroy();
   }
 
+  /** Snapshot for persistence (null when nothing is queued). */
+  save(): SavedQueue | null {
+    const q = this.#state.queue;
+    if (!this.#state.current) return null;
+    return { version: 1, tracks: q.items.map((i) => i.track), order: q.order, cursor: q.cursor, shuffle: q.shuffle, repeat: q.repeat, position: this.#state.position };
+  }
+
+  /**
+   * Restore a saved queue, paused at the saved position (e.g. after the app
+   * was killed). Nothing loads until the user presses play, which then fetches
+   * a fresh stream link and resumes where it left off.
+   */
+  restore(saved: SavedQueue): void {
+    if (this.#state.current || saved.version !== 1 || !saved.tracks.length) return;
+    const valid = saved.order.length > 0 && saved.order.every((i) => i >= 0 && i < saved.tracks.length) && saved.cursor >= 0 && saved.cursor < saved.order.length;
+    if (!valid) return;
+    let queue = queueReducer(emptyQueue, { type: 'replace', tracks: saved.tracks, startIndex: 0, shuffle: false }, this.#random);
+    queue = { ...queue, order: [...saved.order], cursor: saved.cursor, shuffle: saved.shuffle, repeat: saved.repeat };
+    const current = currentItem(queue);
+    this.#intent = 'pause';
+    this.#set({
+      queue,
+      current,
+      status: 'paused',
+      position: Math.max(0, saved.position),
+      duration: current?.track.durationMs ? current.track.durationMs / 1000 : 0,
+    });
+  }
+
+  #metadata(track: TrackDto): TrackMetadata {
+    return { title: track.title, artist: track.artistCredit, album: track.album?.title ?? '', artworkUrl: this.#artworkUrl(track) };
+  }
+
   // ── internals ────────────────────────────────────────────────────────────
 
   #dispatch(action: QueueAction): void {
@@ -292,7 +340,7 @@ export class PlayerController {
     }
     if (seq !== this.#seq) return;
     this.#set({ source: link.source });
-    this.#engine.load(link.url, { startAt, autoplay });
+    this.#engine.load(link.url, { startAt, autoplay, metadata: this.#metadata(item.track) });
     if (!autoplay) this.#set({ status: 'paused' });
   }
 
@@ -365,6 +413,10 @@ export class PlayerController {
       case 'error':
         void this.#recover();
         return;
+      case 'remote':
+        if (e.command === 'next') this.next();
+        else this.prev();
+        return;
     }
   }
 
@@ -392,7 +444,7 @@ export class PlayerController {
     const seq = this.#seq;
     this.#link(next.track.id, false).then(
       (link) => {
-        if (seq === this.#seq) this.#engine.preload(link.url);
+        if (seq === this.#seq) this.#engine.preload(link.url, this.#metadata(next.track));
       },
       () => {
         /* it'll be retried (and reported) when it becomes current */

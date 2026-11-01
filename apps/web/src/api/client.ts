@@ -134,6 +134,13 @@ export class ApiClient {
 
   // ── auth ─────────────────────────────────────────────────────────────────
 
+  /** GET /api/health on a (candidate) server: proves it's reachable and is Overtone. */
+  async health(serverUrl?: string): Promise<{ ok: boolean; version: string }> {
+    const r = await this.#raw<{ ok: boolean; version: string }>('GET', '/api/health', { base: serverUrl });
+    if (!r || r.ok !== true) throw new NetworkError(`${serverUrl ?? this.#serverUrl} is not an Overtone server`);
+    return r;
+  }
+
   status(serverUrl?: string): Promise<AuthStatusDto> {
     return this.#raw<AuthStatusDto>('GET', '/api/auth/status', { base: serverUrl });
   }

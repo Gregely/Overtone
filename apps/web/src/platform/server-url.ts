@@ -35,3 +35,26 @@ export function normalizeServerUrl(input: string): string | null {
     return null;
   }
 }
+
+/** Private / local-network host (RFC 1918, loopback, CGNAT/Tailscale, link-local, local names). */
+export function isPrivateHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h === '::1' || /^fe80:/.test(h) || /^f[cd][0-9a-f]{2}:/.test(h)) return true;
+  if (/^(localhost|[^.]+)$/.test(h) && !/^\d+$/.test(h)) return true; // single-label names ("pi")
+  if (/\.(local|lan|home|internal|home\.arpa|ts\.net)$/.test(h)) return true;
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(h);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a === 10 || a === 127 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254);
+}
+
+/**
+ * The Android app only allows unencrypted HTTP to local-network servers (the
+ * network security config enforces the same at the OS level). Returns a
+ * user-facing message when the URL isn't allowed, else null.
+ */
+export function cleartextProblem(url: string): string | null {
+  const u = new URL(url);
+  if (u.protocol !== 'http:' || isPrivateHost(u.hostname)) return null;
+  return `Unencrypted http:// is only allowed to local-network addresses. Use https:// for ${u.hostname} (for example via Tailscale or a reverse proxy).`;
+}

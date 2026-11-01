@@ -19,7 +19,10 @@
     "dev:server": "tsc -b packages/shared && npm run dev -w @overtone/server",
     "start": "npm run start -w @overtone/server",
     "dev:web": "npm run dev -w @overtone/web",
-    "test:e2e": "npm run build -w @overtone/web && npm run e2e -w @overtone/web"
+    "test:e2e": "npm run build -w @overtone/web && npm run e2e -w @overtone/web",
+    "android:sync": "npm run android:sync -w @overtone/web",
+    "android:build": "node apps/web/scripts/android-build.mjs",
+    "android:keystore": "node apps/web/scripts/android-keystore.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

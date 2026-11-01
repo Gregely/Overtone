@@ -22,7 +22,7 @@ Provider failures use the codes `provider_auth`, `provider_not_found`,
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| GET | `/health` | public | `{ ok, version }` |
+| GET | `/health` | public | `{ ok, version }`. Clients call it to validate a server address before saving it. |
 | GET | `/`, `/*` (non-API) | public | The web app, when `OVERTONE_WEB_DIR` is set (the Docker image sets it). Unknown non-asset paths serve `index.html`. |
 | GET | `/auth/status` | public | `{ setupRequired, multiUser, version }` → show first-run setup if `setupRequired` |
 | POST | `/auth/setup` | public | `{ username, password, deviceName? }` → `AuthTokensDto`. Only works while no users exist. |
@@ -63,7 +63,10 @@ directly in `<img>` (append `&size=250|500|1200`; default 500).
 | GET/HEAD | `/stream/:sourceFileId?st=` | URL token | Audio bytes. Supports `Range` (206/416). May `302` to a public URL when the source is set to redirect and the link has no credentials. |
 | GET | `/artwork/release/:id?at=&size=` | URL token | Cover image, or 404 when there is none. |
 
-Clients prefix relative URLs with their configured server URL. Playing a
+Clients prefix relative URLs with their configured server URL. The Android
+app's native player requests these signed URLs directly (no cookies, no
+`Authorization` header, `Range` for seeking). Its WebView origin is
+`http://localhost`, which is allowed by default. Playing a
 queue usually means one `/stream-urls` call for the next few tracks, then
 fetching more as the queue advances or when `expiresAt` nears.
 

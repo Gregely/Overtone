@@ -23,4 +23,15 @@ for (const [file, size, inset, radius] of [
   writeFileSync(new URL(`../public/${file}`, import.meta.url), await page.locator('svg').screenshot({ omitBackground: true }));
   console.log('wrote', file);
 }
+// Android legacy launcher icons (pre-Android 8; newer devices use the adaptive vector icon).
+const densities = { mdpi: 48, hdpi: 72, xhdpi: 96, xxhdpi: 144, xxxhdpi: 192 };
+for (const [density, size] of Object.entries(densities)) {
+  for (const [file, radius] of [['ic_launcher.png', 14], ['ic_launcher_round.png', 32]]) {
+    await page.setViewportSize({ width: size, height: size });
+    await page.setContent(`<body style="margin:0;background:transparent">${mark(size, 6, radius)}</body>`);
+    const out = new URL(`../android/app/src/main/res/mipmap-${density}/${file}`, import.meta.url);
+    writeFileSync(out, await page.locator('svg').screenshot({ omitBackground: true }));
+  }
+  console.log('wrote android mipmap-' + density);
+}
 await browser.close();

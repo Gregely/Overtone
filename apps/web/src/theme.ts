@@ -1,3 +1,6 @@
+import { SystemBars, SystemBarsStyle } from '@capacitor/core';
+import { isNativeApp } from './platform/server-url';
+
 export type ThemePref = 'system' | 'light' | 'dark';
 const KEY = 'overtone.theme';
 
@@ -27,6 +30,8 @@ export function applyTheme(): void {
   const dark = pref === 'dark' || (pref === 'system' && Boolean(media?.matches));
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#111214' : '#f7f7f5');
+  // Android: status/navigation bar icons must contrast with the app background.
+  if (isNativeApp()) void SystemBars.setStyle({ style: dark ? SystemBarsStyle.Dark : SystemBarsStyle.Light }).catch(() => undefined);
 }
 
 /** Follow OS theme changes while on "system". */

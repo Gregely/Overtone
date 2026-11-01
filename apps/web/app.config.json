@@ -1,0 +1,8 @@
+{
+  "_comment": "appId is the Android package id (change it before your first release; it cannot change later without reinstalling). cleartextHosts: extra hosts/IPs that may use plain HTTP (e.g. \"192.168.1.20\"); see docs/android.md. Run `npm run android:sync` after editing.",
+  "appId": "app.overtone.player",
+  "appName": "Overtone",
+  "versionName": "0.5.0",
+  "versionCode": 5,
+  "cleartextHosts": []
+}

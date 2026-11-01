@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ApiError } from '../api/client';
+import { isNativeApp } from '../platform/server-url';
 import { useSession } from '../session/session';
 import { Icon } from '../ui/Icon';
 import { errorMessage } from '../ui/states';
@@ -79,7 +80,7 @@ export function ServerField({ serverUrl, startEditing = false }: { serverUrl: st
           autoComplete="url"
           autoCapitalize="off"
           spellCheck={false}
-          placeholder="http://192.168.1.10:4800"
+          placeholder={isNativeApp() ? 'https://music.example.com' : 'http://192.168.1.10:4800'}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           aria-invalid={error ? true : undefined}

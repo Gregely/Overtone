@@ -6,10 +6,10 @@ a Navidrome/Subsonic server, Internet Archive collections, or the audio
 already in your debrid account. It merges them into one MusicBrainz-matched
 library and streams to a PWA and an Android app.
 
-> **Status: stage 4 of 6.** The server and the installable web app work end
-> to end with every source type: local folders, Subsonic/Navidrome, Internet
-> Archive, Real-Debrid, AllDebrid, TorBox and Premiumize. The Android app
-> comes in stage 5. See [`docs/PLAN.md`](docs/PLAN.md).
+> **Status: stage 5 of 6.** The server, the installable web app, and an
+> Android app (Capacitor + native Media3 playback) work with every source
+> type: local folders, Subsonic/Navidrome, Internet Archive, Real-Debrid,
+> AllDebrid, TorBox and Premiumize. See [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Run it (Docker, e.g. on a Raspberry Pi 4/5)
 
@@ -52,7 +52,7 @@ the server hosts it at `/`.
 - **HTTPS:** browsers only allow service workers (installing, offline shell)
   on `https://` or `localhost`. On a LAN IP over plain HTTP the app still
   works but can't be installed. For access away from home, use Tailscale or
-  a reverse proxy with HTTPS (guide coming in stage 5).
+  a reverse proxy with HTTPS. See [`docs/remote-access.md`](docs/remote-access.md).
 - **Admins** also get *Settings › Sources* (add, edit, test, scan and delete
   sources; saved keys are never shown again) and a *Review matches* queue
   for files that couldn't be confidently identified.
@@ -71,6 +71,37 @@ npm run dev:web
 
 The service worker is only active in production builds (`npm run build`,
 then serve `apps/web/dist` from the server with `OVERTONE_WEB_DIR`).
+
+## Android app
+
+A native Android app built from the same code (Capacitor). It plays in the
+background through a Media3 foreground service, with a media notification,
+lock-screen and Bluetooth/headset controls, audio focus, pause on headphone
+unplug, and near-gapless track changes. Tokens are kept in Android Keystore
+encrypted storage.
+
+```sh
+export ANDROID_HOME=~/android-sdk   # Android SDK; JDK 21 on PATH
+npm run android:keystore            # once: release signing key (back it up!)
+npm run android:build               # → apps/web/android-dist/*.apk / *.aab
+```
+
+Then sideload `overtone-<version>-release.apk`. On first launch, enter your
+server address; `https://` is recommended (Tailscale makes it one command).
+Plain `http://` works only to local-network names and the private IPs you
+list in `apps/web/app.config.json`.
+
+**Permissions:** `INTERNET`, `FOREGROUND_SERVICE` +
+`FOREGROUND_SERVICE_MEDIA_PLAYBACK` (background playback), `POST_NOTIFICATIONS`
+(media notification, asked on first play), `WAKE_LOCK` (streaming with the
+screen off), and `ACCESS_NETWORK_STATE` (added by the Media3 library).
+There are no analytics, ads, or tracking SDKs.
+
+The full guide is in [`docs/android.md`](docs/android.md): toolchain
+versions, package ID, signing and backups, sideloading, updating, the HTTP
+policy and its tradeoffs, and a device test checklist. The Android build and
+native unit tests run in this repo's environment, but on-device playback has
+**not** been tested yet.
 
 ## Sources
 
@@ -140,9 +171,11 @@ once, if you don't have one).
 | `apps/server/src/providers/types.ts` | **The plugin interface** |
 | `apps/server/src/providers/debrid/types.ts` | Debrid adapter interface |
 | `apps/server/src/metadata/matcher` | Tag/filename → MusicBrainz matcher |
-| `apps/web` | React + Vite PWA, later wrapped by Capacitor for Android (stage 5) |
+| `apps/web` | React + Vite PWA; also the Android app via Capacitor |
+| `apps/web/android` | Capacitor Android project: Media3 playback service, Keystore storage plugin |
+| `apps/web/app.config.json` | Android package id, app name, version, cleartext hosts |
 | `apps/web/src/player` | Queue state machine, player controller (link refresh), audio engine, Media Session |
-| `docs/` | [Plan](docs/PLAN.md), [API](docs/api.md), [writing a provider](docs/providers.md) |
+| `docs/` | [Plan](docs/PLAN.md), [API](docs/api.md), [writing a provider](docs/providers.md), [Android](docs/android.md), [remote access](docs/remote-access.md) |
 
 ## Scope note
 

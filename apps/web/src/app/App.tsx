@@ -5,7 +5,9 @@ import { ApiClient } from '../api/client';
 import { retryPolicy } from '../api/hooks';
 import { AppShell } from '../layout/AppShell';
 import { Page } from '../layout/Page';
-import { localStore } from '../platform/storage';
+import { SecureStorage } from '../platform/native';
+import { isNativeApp } from '../platform/server-url';
+import { localStore, secureStore, type KeyValueStore } from '../platform/storage';
 import { PlayerProvider } from '../player/react';
 import { SessionProvider, useSession } from '../session/session';
 import { AlbumView, ArtistView } from '../views/Album';
@@ -19,8 +21,13 @@ import { SettingsView } from '../views/Settings';
 import { SourceEditView, SourcesView } from '../views/Sources';
 import { ApiProvider, useApiState } from './context';
 
+/** Tokens + server URL: Android Keystore-encrypted storage in the app, localStorage on the web. */
+export function sessionStore(): KeyValueStore {
+  return isNativeApp() ? secureStore(SecureStorage) : localStore;
+}
+
 export function App({ client }: { client?: ApiClient }) {
-  const [api] = useState(() => client ?? new ApiClient({ storage: localStore, serverUrl: null }));
+  const [api] = useState(() => client ?? new ApiClient({ storage: sessionStore(), serverUrl: null }));
   const [queryClient] = useState(
     () =>
       new QueryClient({

@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import type { LoginRequestDto, UserDto } from '@overtone/shared';
 import { ApiError, NetworkError } from '../api/client';
 import { useApi } from '../app/context';
-import { defaultServerUrl, normalizeServerUrl } from '../platform/server-url';
+import { cleartextProblem, defaultServerUrl, isNativeApp, normalizeServerUrl } from '../platform/server-url';
 
 export type SessionPhase =
   | { phase: 'booting' }
@@ -75,10 +75,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       changeServer: async (input) => {
         const url = normalizeServerUrl(input);
         if (!url) throw new Error('Enter a server address like http://192.168.1.10:4800');
+        if (isNativeApp()) {
+          const problem = cleartextProblem(url);
+          if (problem) throw new Error(problem);
+        }
         try {
+          // Health check first (any Overtone server answers it), then the auth status.
+          await api.health(url);
           await api.status(url);
         } catch (err) {
-          throw new Error(err instanceof NetworkError ? `Can't reach an Overtone server at ${url}` : (err as Error).message);
+          if (!(err instanceof NetworkError)) throw new Error((err as Error).message);
+          const host = new URL(url).hostname;
+          const ipOverHttp = isNativeApp() && url.startsWith('http:') && /^\d+\.\d+\.\d+\.\d+$/.test(host);
+          throw new Error(
+            ipOverHttp
+              ? `Can't reach ${url}. Android only allows plain http:// to IP addresses listed in the app's cleartextHosts setting; use https://, a .local / .ts.net name, or add ${host} and rebuild (see docs/android.md).`
+              : `Can't reach an Overtone server at ${url}`,
+          );
         }
         await api.setServerUrl(url);
         await evaluate();

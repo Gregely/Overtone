@@ -104,7 +104,7 @@ overtone/
         │   ├── platform/          # web vs Capacitor shims (storage, server URL)
         │   └── sw.ts              # service worker
         ├── e2e/                   # Playwright smoke test
-        └── android/          # Capacitor Android project (stage 5)
+        └── android/          # Capacitor Android project (stage 5; see §6)
 ```
 
 Why `shared`: the Settings > Sources screen renders each provider's config
@@ -523,25 +523,62 @@ indicator with scan progress, then matching progress, then "N to review".
   sign out / in with server change, and offline shell → unreachable →
   recovery. axe runs on each main screen.
 
-## 6. Android (Stage 5)
+## 6. Android (Stage 5 — built)
 
-- Capacitor (latest stable) wrapping `apps/web` with the same build.
-  `android/` lives under `apps/web`.
-- **Background playback:** a webview's `<audio>` gets throttled or killed in
-  the background, so Android uses a small local Capacitor plugin,
-  `NativePlayer`, backed by **Media3 ExoPlayer + MediaSessionService**. That
-  gives a foreground service, the media notification with controls, audio
-  focus (duck/pause on calls), and the becoming-noisy (headphones unplugged)
-  pause. The web UI picks `NativeEngine` under Capacitor and `HtmlAudioEngine`
-  on the web through the same `PlayerEngine` interface. The queue stays in
-  JS, and the native side holds the current and next item for gapless
-  playback.
-- **Secure token storage:** Android Keystore-backed secure storage plugin,
-  wrapped by `platform/storage`.
-- Cleartext HTTP to LAN IPs is allowed only via an opt-in network-security
-  config. HTTPS (Tailscale/reverse proxy) is the documented path.
-- `docs/remote-access.md` covers two options: Tailscale (MagicDNS +
-  `tailscale serve` for HTTPS) and Caddy/Traefik with Let's Encrypt.
+See [android.md](android.md) for build, install and test details.
+
+- **Capacitor 8.6** wraps `apps/web` (same React code, no fork). The native
+  project is `apps/web/android`. `apps/web/app.config.json` holds the package
+  id, name, version and cleartext hosts; both `capacitor.config.ts` and
+  Gradle read it.
+- **Platform seams.**
+  - `createEngine()` picks `NativeEngine` (Android) or `HtmlAudioEngine`
+    (web).
+  - `sessionStore()` picks Keystore-backed `secureStore` or `localStorage`.
+  - `defaultServerUrl()` is `null` on Android, so the first launch asks for
+    the address.
+  - `installBackButton()`, the `SystemBars` style in `applyTheme()`, and the
+    service worker skip on native round it out.
+- **Native playback** (`android/.../playback`):
+  - `PlaybackService` is a Media3 `MediaSessionService` with ExoPlayer. It
+    handles audio focus, becoming-noisy, a network wake mode, and
+    cross-protocol redirects.
+  - `RemoteCommandPlayer` (a `ForwardingPlayer`) always offers
+    next/previous and forwards them to JS as a custom session command.
+  - `NativePlayerPlugin` drives the service through a `MediaController` on
+    the main looper. Events: `state`, `time`, `advanced`, `ended`, `error`,
+    `remote`.
+  - The JS `PlayerController` remains the source of truth (queue, shuffle,
+    repeat, link refresh). The native playlist only holds the current track
+    plus the preloaded next one, so hand-offs are gapless. An `advanced`
+    event maps to `ended`, and the following `load()` of the same URL is a
+    no-op.
+  - Errors carry the position, so the controller resumes on a fresh link.
+- **Engine interface additions** (both engines): `load()` / `preload()`
+  accept `TrackMetadata` (title, artist, album, absolute artwork URL) for
+  the OS notification, and a `remote` event (next/previous) exists.
+  `PlayerController` gained `save()` / `restore()`; `persistence.ts` uses
+  them to restore the queue paused after process death, on web too.
+- **Storage:** `SecureStoragePlugin` uses AES-256-GCM under a
+  non-exportable Android Keystore key, with values in private
+  SharedPreferences. Backups are disabled.
+- **Network:** the WebView origin is `http://localhost`
+  (`androidScheme: "http"`), which avoids WebView mixed content. A generated
+  network security config allows cleartext only to local names and listed
+  private IPs; it can't express IP ranges. The app refuses `http://` to
+  public hosts. The server needed no changes: `http://localhost` is already
+  an allowed origin.
+- **UX:** an adaptive icon (vector, monochrome layer), a vector splash, a
+  DayNight theme (the WebView's `prefers-color-scheme` follows it),
+  edge-to-edge via SystemBars `native` insets, and back-button handling.
+- **Build:** `npm run android:build` produces a debug APK, plus a signed
+  release APK and AAB when a keystore exists. `npm run android:keystore`
+  creates the keystore locally; it's git-ignored. Native JVM tests run with
+  Robolectric: `./gradlew testDebugUnitTest`.
+- **Verification:** the APK, AAB, signing, lint, merged permissions and the
+  JVM and TS bridge tests were all verified. On-device behaviour was **not**
+  verified (no emulator available); [android.md](android.md) has the manual
+  checklist.
 
 ## 7. Testing
 
@@ -563,7 +600,7 @@ indicator with scan progress, then matching progress, then "N to review".
 | 2 | DB schema & migrations, auth, crypto, MusicBrainz/CAA, matcher, scanner, LocalFolder, streaming, Docker | ✅ |
 | 3 | Web app: setup/login, library, search, album, player (link refresh), Media Session, PWA/offline, Sources UI, fix match, themes, a11y, e2e | ✅ |
 | 4 | Subsonic, Internet Archive, Real-Debrid/AllDebrid/TorBox/Premiumize adapters, generic "Log in with…", stream hardening, e2e with fake services | ✅ |
-| 5 | Capacitor Android: NativePlayer plugin, notification, focus, secure storage, docs | |
+| 5 | Capacitor Android: Media3 NativePlayer service, notification/focus/noisy, Keystore storage, cleartext policy, build/sign scripts, docs | ✅ (device testing pending) |
 | 6 | Polish, test coverage, README/docs | |
 
 ## 9. Decisions
