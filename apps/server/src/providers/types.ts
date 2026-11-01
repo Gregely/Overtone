@@ -99,6 +99,12 @@ export interface SourceProvider {
   readTags?(fileId: string, opts: CallOptions): Promise<FileTags | null>;
 
   /**
+   * Optional: embedded cover art, used when the Cover Art Archive has none.
+   * Return null when the file has no picture.
+   */
+  readArtwork?(fileId: string, opts: CallOptions): Promise<EmbeddedArtwork | null>;
+
+  /**
    * Optional: push change notifications (e.g. a filesystem watcher). The
    * scanner reacts by re-listing (debounced), so `onChange` may be coarse.
    */
@@ -178,6 +184,11 @@ export interface ResolvedStream {
   redirectSafe?: boolean;
   mimeType?: string;
   size?: number;
+}
+
+export interface EmbeddedArtwork {
+  data: Uint8Array;
+  mimeType: string;
 }
 
 export interface ConnectionTestResult {

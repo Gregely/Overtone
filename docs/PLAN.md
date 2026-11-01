@@ -72,6 +72,9 @@ overtone/
     │       │   └── matcher/       # tags/filename → MB recording/release (stage 2)
     │       ├── library/           # scanner, dedupe, unified library (stage 2)
     │       ├── streaming/         # proxy/redirect, range, link re-resolution (stage 2)
+    │       ├── app.ts / services.ts   # Fastify app + service wiring (stage 2)
+    │       ├── http/              # errors, auth hooks, provider fetch, log redaction (stage 2)
+    │       ├── sources/           # SourceManager: persistence, secrets, provider instances (stage 2)
     │       ├── routes/            # REST API (stage 2+)
     │       ├── testing/           # test helpers for provider authors (stage 1)
     │       └── providers/
@@ -199,98 +202,157 @@ links that die early.
 
 ---
 
-## 4. Backend design (Stage 2)
+## 4. Backend design (Stage 2 — built)
+
+The full endpoint list is in [`docs/api.md`](api.md).
 
 ### Configuration (env)
 
 | Var | Purpose |
 |---|---|
-| `OVERTONE_SECRET_KEY` | 32-byte key (base64/hex). AES-256-GCM for stored secrets and HMAC for stream tokens. **Required.** Generate with `openssl rand -base64 32`. |
-| `OVERTONE_DATA_DIR` | SQLite DB, caches. Default `/data`. |
-| `OVERTONE_MUSIC_DIR` | Default LocalFolder mount. Default `/music`. |
-| `OVERTONE_PUBLIC_URL` | Used to build absolute stream URLs for clients. |
-| `OVERTONE_CORS_ORIGINS` | Comma list. Defaults include `capacitor://localhost`, `http://localhost`, `https://localhost`. |
-| `OVERTONE_MB_CONTACT` | Contact (email/URL) for the MusicBrainz User-Agent. |
-| `OVERTONE_MULTI_USER` | `false` (default) → single user. First-run setup creates the admin. |
+| `OVERTONE_SECRET_KEY` | **Required.** 32-byte key (base64 or hex); `OVERTONE_SECRET_KEY_FILE` for Docker secrets. HKDF derives separate subkeys for stored secrets (AES-256-GCM), access tokens, stream tokens and artwork tokens. Generate with `openssl rand -base64 32`. |
+| `OVERTONE_DATA_DIR` | SQLite DB + artwork cache. Default `./data` (`/data` in Docker). |
+| `OVERTONE_MUSIC_DIR` | Folder auto-added as a "Music" LocalFolder source on first boot. Default `/music`; empty disables it. |
+| `OVERTONE_PORT` / `OVERTONE_HOST` | Default `4800` / `0.0.0.0`. |
+| `OVERTONE_CORS_ORIGINS` | Extra allowed origins. `https://localhost`, `http://localhost`, `capacitor://localhost` are always allowed. |
+| `OVERTONE_MB_CONTACT` | Contact for the MusicBrainz User-Agent. |
+| `OVERTONE_MULTI_USER` | `false` (default) → single user. |
+| `OVERTONE_SCAN_INTERVAL_MINUTES` | Full rescan interval, default 360 (0 = off). |
+| `OVERTONE_TRUST_PROXY` | Set when behind a reverse proxy. |
+| `OVERTONE_LOG_LEVEL` | Default `info`. |
 
-### Database (better-sqlite3, WAL mode, hand-rolled numbered migrations)
+Stream and artwork URLs are returned **relative** (`/api/stream/…`), and
+clients prefix their configured server URL. No public-URL setting is needed,
+and the same response works for the PWA and the Android app.
+
+### Database
+
+better-sqlite3 in WAL mode with append-only numbered migrations
+(`db/migrations.ts`, version kept in `PRAGMA user_version`).
 
 ```
-users(id, username, password_hash, is_admin, created_at)
-refresh_tokens(id, user_id, token_hash, family_id, expires_at, revoked_at, replaced_by, user_agent, created_at)
-sources(id, plugin_id, name, enabled, config_json, secrets_enc, stream_mode, last_scan_at, last_error)
-provider_state(source_id, key, value_json)
-source_files(source_id, file_id, name, path, size, mime, modified_at, duration_ms,
-             tags_json, track_id NULL, match_status, match_score, seen_at,
-             PRIMARY KEY(source_id, file_id))
-artists(id, mbid UNIQUE NULL, name, sort_name)
-releases(id, mbid UNIQUE NULL, release_group_mbid, title, artist_credit, date, cover_url)
-tracks(id, recording_mbid NULL, release_id, title, artist_credit, artist_id,
-       disc_no, track_no, duration_ms, UNIQUE(recording_mbid, release_id))
-mb_cache(key PRIMARY KEY, body_json, status, fetched_at, expires_at)
-playlists / play_history (later)
+users            id, username (NOCASE unique), password_hash, is_admin
+refresh_tokens   token_hash, family_id, expires_at, used_at, revoked_at   (hashed, rotated)
+sources          id, provider_id, name, enabled, priority, stream_mode, config_json, secrets_enc
+provider_state   (source_id, key) → value_json
+source_files     id AUTOINCREMENT, (source_id, file_id) unique, path, size, mtime, tags_json,
+                 tags_status, track_id, match_status, match_score, match_candidates_json, scan_id
+artists          key unique ('mb:<mbid>' | 'local:<name>'), mbid, name, sort_name, search_text
+releases         id AUTOINCREMENT, key unique, mbid, release_group_mbid, title, artist_id, year,
+                 cover_status (unknown|caa|embedded|none)
+tracks           key unique ('mb:<recording>:<release>' | 'local:…'), recording_mbid, release_id,
+                 artist_id, title, disc_no, track_no, duration_ms, search_text
+available_tracks VIEW: tracks with at least one file on an enabled source
+mb_cache         key → status, body, expires_at
 ```
 
-**Dedup.** A `track` is one recording on one release. Multiple
-`source_files` can point to the same `track_id`. That is the "same song from
-two sources" case, and the UI shows one row with several source badges.
-Playback picks the best available source (local first, then by user
-priority). Unmatched files still get a `track` row (no MBID) so nothing
-disappears from the library.
+**Dedup.** A `track` is one recording on one release. Every file that
+matches the same `(recording, release)` points at the same row, which is
+how "the same song in two sources" shows as one row with two source badges.
+Before MusicBrainz matching (or when it fails), a file gets a *provisional*
+track keyed on normalized tags. The library is browsable seconds after a
+scan, and identical untagged copies still dedupe. Playback picks the
+lowest-`priority` enabled source (local 0, servers 5, others 10).
+
+Ids that appear in URLs (`releases`, `source_files`) use `AUTOINCREMENT`, so
+a deleted row's id is never reused by something else.
 
 ### Auth
 
-- Passwords: `scrypt` from `node:crypto`, so the Pi build needs no native
-  argon2.
-- **Access token:** JWT (HS256, 15 min), sent as `Authorization: Bearer`.
-- **Refresh token:** opaque 256-bit random, stored *hashed*, 30-day sliding
-  window, **rotated on every use** with reuse detection. A replayed refresh
-  token revokes its whole family.
-- **Stream tokens:** `<audio>` elements and Android's native player can't
-  attach headers. Track URLs therefore carry a short-lived HMAC token scoped
-  to `(userId, trackSourceId)`, e.g. `?st=…`, valid ~6h. Clients get these
-  from the API, never construct them.
-- **CORS:** `@fastify/cors` with an explicit allowlist (env), credentials
-  off. Tokens travel in headers, not cookies.
-- Single-user by default: first-run `POST /api/setup` creates the admin and
-  then locks. Multi-user lets the admin create accounts.
+- Passwords: `scrypt` (N=2¹⁵, r=8) from `node:crypto`. No native deps.
+  Unknown usernames cost the same time as wrong passwords.
+- **Access token:** HS256 JWT, 15 min, `Authorization: Bearer`. The header
+  is pinned, so `alg` confusion and `none` are rejected.
+- **Refresh token:** opaque 256-bit, stored as SHA-256, 30-day sliding
+  window, single-use. Replaying a rotated token revokes the whole session
+  family. A replay within 20 s of rotation returns `refresh_race` instead, so
+  a client that double-fires doesn't log itself out. A password change
+  revokes every session.
+- **Stream tokens** (`?st=`): HMAC over `(userId, sourceFileId, exp)`, 6 h,
+  valid for that one file. **Artwork tokens** (`?at=`): per user, expiry
+  aligned to a day boundary so cover URLs stay cacheable. Both are needed
+  because `<audio>`, `<img>` and Android's native player can't send headers.
+  Both are rejected once the user is deleted.
+- Request logs redact `st`/`at`/key-like query params and the
+  `Authorization` header. Provider loggers additionally scrub any current
+  secret value.
+- Login, setup and password change are rate-limited (10/min/IP).
+- CORS uses an explicit allowlist, with credentials off.
+- Single-user by default: `POST /api/auth/setup` works once. With
+  `OVERTONE_MULTI_USER=true`, admins manage users via `/api/users`. Source
+  management and fix-match are admin-only.
+
+### Library scanning
+
+`LibraryScanner` processes one source at a time.
+
+1. List the source and upsert files, diffed by id + size + mtime.
+2. Remove files that weren't seen. **Exception:** a previously non-empty
+   source that suddenly lists zero files (an unmounted drive or an API
+   outage) keeps its library, and the scan reports an error.
+3. Read tags for new or changed files. Sources, in priority order: tags
+   from the listing (Subsonic, IA), then `provider.readTags()`
+   (LocalFolder), then a 256 KB range-request probe (debrid), then
+   filename parsing. Provisional tracks are attached right away.
+4. Kick the `MatchWorker`.
+
+Triggers: on boot, every `OVERTONE_SCAN_INTERVAL_MINUTES`, on source
+create/update, from a recursive `fs.watch` (15 s debounce), and from
+`POST /api/sources/:id/scan`.
 
 ### Metadata
 
-- **MusicBrainz client:** a single global queue, ≤1 req/s with a backoff on
-  503, a `User-Agent: Overtone/<ver> ( <contact> )` header, and responses
-  cached in `mb_cache` (30 days for entities, 7 days for searches, 1 day for
-  misses).
-- **Cover Art Archive:** `front-250`/`front-500` thumbnails, resolved per
-  release (falling back to release group). URLs are cached and images are
-  proxied with long-lived cache headers. Embedded art is extracted for local
-  files as a fallback.
-- **Matcher** (pure, heavily tested), in this order:
-  1. MBIDs in tags (`MUSICBRAINZ_TRACKID`, Picard-tagged files) win outright.
-  2. Otherwise build a query from tags (artist, title, album, track number,
-     duration) or from the parsed filename/path (`Artist/Album/01 - Title.flac`,
-     `Artist - Title.mp3`, …).
-  3. Search MB recordings and score candidates: normalized string
-     similarity (title, artist, release), a duration delta penalty,
-     track-number agreement, and consistency with other files in the same
-     folder (album coherence).
-  4. Score ≥ 0.85 → auto-match. 0.6–0.85 → `needs_review`. Below that →
-     `unmatched`.
-  5. **Fix match** API/UI: search MB, pick a recording/release, and pin it
-     (`match_status = manual`, never overwritten by rescans).
+- **MusicBrainz client:** a single process-wide queue with request starts
+  ≥1.1 s apart, `User-Agent: Overtone/<ver> ( <contact> )`, and retry with
+  backoff on 5xx/429. Responses are cached in `mb_cache` (30 d entities, 7 d
+  searches, 1 d misses), and identical in-flight requests are coalesced.
+- **Matcher** (`metadata/matcher/`), cheapest strategy first:
+  1. **MBIDs in tags** (Picard): one cached release lookup, trusted as score 1.
+  2. **Album strategy:** for a folder whose files share an album tag, search
+     the release once, fetch up to 3 candidate tracklists, and assign files
+     by disc/track number or title. That's about 2–4 requests per album
+     instead of one per track.
+  3. **Per-recording search** for anything left, with a bonus for releases
+     the rest of the folder matched.
+
+  Scoring blends title similarity, artist similarity (with ligature and
+  diacritic folding, `feat.` stripping and word-order tolerance), duration
+  difference, album similarity, track-number agreement, and a preference
+  for official studio albums. A title alone never auto-matches. Score
+  ≥ 0.85 → `matched`. 0.6–0.85 → `needs_review` (the best guess is
+  applied). Lower → `unmatched` (the file keeps its tag-based track).
+  MusicBrainz outages pause matching and retry in 5 min. Files are never
+  marked unmatched because MusicBrainz was down.
+- **Fix match:** file-level search (scored against the file),
+  pin-a-recording, album-level "use this release", and rematch. Manual
+  matches survive rescans.
+- **Cover Art Archive:** release `front-{250,500,1200}`, then the release
+  group, then embedded pictures (`provider.readArtwork`). Images are cached
+  on disk under `<data>/artwork`. Misses are retried after 7 days.
 
 ### Streaming
 
-`GET /api/stream/:sourceId/:fileId?st=…`
+`GET /api/stream/:sourceFileId?st=…` (a Bearer token is also accepted)
 
-1. Verify the stream token, look up the source, then `resolveStream` through `ResolveCache`.
-2. `file://` → serve from disk with `Range`/`206`, `Accept-Ranges`, and
-   correct `Content-Type`.
-3. `http(s)://` → if `streamMode=redirect` **and** `redirectSafe`, send a
-   `302`. Otherwise proxy with `undici`, forwarding `Range` and provider
-   headers and relaying status, length, and range headers. Upstream auth
-   headers are never echoed back.
-4. If upstream returns 401/403/404/410, evict, re-resolve once, and retry.
+1. Verify the token (it must be for this file), check the source is
+   enabled, then `resolveStream` through `ResolveCache`.
+2. `file://` → served from disk with `Range`/`206`/`416`, `Accept-Ranges`
+   and `Content-Type`.
+3. `http(s)://` → `302` only if the source's `streamMode` is `redirect`
+   **and** the resolution is `redirectSafe` **and** it needs no headers.
+   Otherwise it's proxied: `Range`/`If-Range` and provider headers go
+   upstream, and only status, type, length, range, ETag and Last-Modified
+   are relayed back. Upstream cookies and custom headers are dropped.
+4. If upstream returns 401/403/404/410, invalidate the link, re-resolve
+   with `forceRefresh`, and retry once.
+5. A client disconnect aborts the upstream request (seeking creates many
+   short requests).
+
+### Deployment
+
+`Dockerfile` (multi-stage, `node:22-bookworm-slim`, runs as uid 1000,
+healthcheck on `/api/health`) and `docker-compose.yml`. The music volume is
+mounted read-only.
 
 ---
 
@@ -355,23 +417,24 @@ disappears from the library.
 
 | # | Stage | Commit(s) |
 |---|---|---|
-| 1 | Folder structure, plan, provider + debrid interfaces, config schema/validator, registry, debrid bridge, resolve cache, tests | ← **this commit; stop for approval** |
-| 2 | DB schema & migrations, auth, crypto, MusicBrainz/CAA, matcher, scanner, LocalFolder, streaming, Docker | |
+| 1 | Folder structure, plan, provider + debrid interfaces, config schema/validator, registry, debrid bridge, resolve cache, tests | ✅ |
+| 2 | DB schema & migrations, auth, crypto, MusicBrainz/CAA, matcher, scanner, LocalFolder, streaming, Docker | ✅ |
 | 3 | Web app: library, search, album, player, Media Session, PWA, themes | |
 | 4 | Subsonic, Internet Archive, Real-Debrid/AllDebrid/TorBox/Premiumize adapters, Settings > Sources (+ test connection, device flow) | |
 | 5 | Capacitor Android: NativePlayer plugin, notification, focus, secure storage, docs | |
 | 6 | Polish, test coverage, README/docs | |
 
-## 9. Open questions for you
+## 9. Decisions
 
-1. **Debrid in Settings:** four separate source types (current design), or one
-   "Debrid" type with a service dropdown? Separate types keep each form
-   simpler and allow device-flow buttons per service.
-2. **Default stream mode:** proxy everything by default (safest, and the Pi
-   pays the bandwidth), or redirect where `redirectSafe`? Current plan:
-   **proxy** by default, redirect opt-in per source.
-3. **Internet Archive scope:** the plan is user-configured *collections or
-   saved searches* (e.g. `collection:etree`, `licenseurl:*creativecommons*`)
-   that define what appears in the library. That is a curated listing of
-   openly licensed audio, not a general search-and-add feature. OK?
-4. **Transcoding:** confirm it is out of scope for v1.
+Agreed after stage 1:
+
+1. **Debrid:** four separate source types (Real-Debrid, AllDebrid, TorBox,
+   Premiumize).
+2. **Streaming:** proxy by default. Redirect is a per-source opt-in, and it
+   applies only to resolutions that carry no credentials. Both conditions
+   are enforced server-side, and providers whose links always carry
+   credentials can't be set to redirect at all.
+3. **Internet Archive:** limited to a configured collection or query of
+   public-domain / Creative Commons audio.
+4. **No transcoding in v1.**
+5. **TypeScript 7.0**, exact version pinned.

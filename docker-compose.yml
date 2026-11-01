@@ -1,0 +1,29 @@
+# Overtone — single-container deployment (Raspberry Pi 4/5 friendly).
+#
+#   cp .env.example .env      # then set OVERTONE_SECRET_KEY and MUSIC_DIR
+#   docker compose up -d
+#
+# Open http://<pi-address>:4800 . For access outside your home network see
+# docs/remote-access.md (Tailscale or a reverse proxy with HTTPS).
+services:
+  overtone:
+    build: .
+    image: overtone:latest
+    container_name: overtone
+    restart: unless-stopped
+    # The image runs as uid 1000 ("node"). Match it to the owner of ./data,
+    # e.g. PUID=$(id -u) PGID=$(id -g) in .env.
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${OVERTONE_PORT:-4800}:4800"
+    env_file: .env
+    environment:
+      OVERTONE_DATA_DIR: /data
+      OVERTONE_MUSIC_DIR: /music
+      OVERTONE_PORT: "4800"
+    volumes:
+      - ./data:/data
+      # Read-only: Overtone never modifies your music.
+      - ${MUSIC_DIR:?Set MUSIC_DIR in .env}:/music:ro
+    # Optional: keep memory in check on small boards.
+    # mem_limit: 512m

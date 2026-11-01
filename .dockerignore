@@ -1,0 +1,9 @@
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.git
+data
+coverage
+.env
+.env.*
+apps/web/android
