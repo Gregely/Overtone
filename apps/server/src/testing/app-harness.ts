@@ -7,10 +7,8 @@ import { Writable } from 'node:stream';
 import { buildApp } from '../app.js';
 import { DEFAULT_CORS_ORIGINS, type Config } from '../config.js';
 import { openDatabase } from '../db/index.js';
-import type { MusicBrainzApi } from '../metadata/musicbrainz/types.js';
+import { ProviderRegistry, type MusicBrainzApi, type ProviderPlugin } from '@overtone/core';
 import { builtinPlugins } from '../providers/index.js';
-import { ProviderRegistry } from '../providers/registry.js';
-import type { ProviderPlugin } from '../providers/types.js';
 import { FakeMusicBrainz } from './fake-musicbrainz.js';
 
 export interface HarnessOptions {
@@ -19,6 +17,7 @@ export interface HarnessOptions {
   fetch?: typeof fetch;
   config?: Partial<Config>;
   skipSetup?: boolean;
+  now?: () => number;
 }
 
 export async function createHarness(opts: HarnessOptions = {}) {
@@ -55,6 +54,7 @@ export async function createHarness(opts: HarnessOptions = {}) {
     db: openDatabase(':memory:'),
     registry,
     mb: opts.mb ?? new FakeMusicBrainz([]),
+    ...(opts.now ? { now: opts.now } : {}),
     fetch: opts.fetch ?? (async (u) => {
       throw new Error(`unexpected fetch ${String(u)}`);
     }),

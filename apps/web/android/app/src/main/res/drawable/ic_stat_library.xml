@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon for the "Updating your library" notification (monochrome, 24dp). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M5,9h2.5v6H5zM9.5,6h2.5v12H9.5zM14,4h2.5v16H14zM18.5,8H21v8h-2.5z" />
+</vector>

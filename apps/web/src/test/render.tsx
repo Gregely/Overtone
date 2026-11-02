@@ -3,7 +3,7 @@ import { render } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router';
 import { vi } from 'vitest';
-import { ApiClient } from '../api/client';
+import { HttpTransport } from '../api/client';
 import { ApiProvider } from '../app/context';
 import { memoryStore } from '../platform/storage';
 import { PlayerController, type LinkFetcher, type StreamLink } from '../player/controller';
@@ -22,11 +22,11 @@ export function setupPlayer() {
     };
   });
   const player = new PlayerController({ engine, fetchLinks, random: seeded() });
-  const api = new ApiClient({ storage: memoryStore(), serverUrl: 'http://srv', fetch: vi.fn() });
+  const api = new HttpTransport({ storage: memoryStore(), serverUrl: 'http://srv', fetch: vi.fn() });
   return { engine, fetchLinks, player, api };
 }
 
-export function renderWithApp(ui: ReactNode, { api, player, route = '/' }: { api: ApiClient; player: PlayerController; route?: string }) {
+export function renderWithApp(ui: ReactNode, { api, player, route = '/' }: { api: HttpTransport; player: PlayerController; route?: string }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <ApiProvider client={api}>

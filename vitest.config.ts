@@ -2,11 +2,13 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 const shared = fileURLToPath(new URL('./packages/shared/src/index.ts', import.meta.url));
+const core = fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url));
+const coreTesting = fileURLToPath(new URL('./packages/core/src/testing/index.ts', import.meta.url));
 
 export default defineConfig({
   resolve: {
-    // Tests run against shared sources directly; no build step needed.
-    alias: { '@overtone/shared': shared },
+    // Tests run against package sources directly; no build step needed.
+    alias: { '@overtone/shared': shared, '@overtone/core/testing': coreTesting, '@overtone/core': core },
   },
   test: {
     projects: [

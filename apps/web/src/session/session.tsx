@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { LoginRequestDto, UserDto } from '@overtone/shared';
-import { ApiError, NetworkError } from '../api/client';
+import { ApiError, HttpTransport, NetworkError, type ApiClient } from '../api/client';
 import { useApi } from '../app/context';
 import { cleartextProblem, defaultServerUrl, isNativeApp, normalizeServerUrl } from '../platform/server-url';
 
@@ -9,7 +9,8 @@ export type SessionPhase =
   | { phase: 'unreachable'; serverUrl: string }
   | { phase: 'setup'; serverUrl: string; version: string }
   | { phase: 'login'; serverUrl: string | null; version: string | null; notice?: string }
-  | { phase: 'ready'; serverUrl: string; version: string; user: UserDto };
+  /** serverUrl is null in standalone mode (no server, no sign-in). */
+  | { phase: 'ready'; serverUrl: string | null; version: string; user: UserDto };
 
 interface SessionApi {
   state: SessionPhase;
@@ -29,8 +30,34 @@ export function useSession(): SessionApi {
   return s;
 }
 
+/**
+ * Standalone mode has a single local user and no login: the session is
+ * ready as soon as the on-device library is open.
+ */
+function StandaloneSession({ api, children }: { api: ApiClient; children: ReactNode }) {
+  const [state, setState] = useState<SessionPhase>({ phase: 'booting' });
+  useEffect(() => {
+    void Promise.all([api.get<{ version: string }>('/api/health'), api.get<UserDto>('/api/me')]).then(([h, user]) =>
+      setState({ phase: 'ready', serverUrl: null, version: h.version, user }),
+    );
+  }, [api]);
+  const value = useMemo<SessionApi>(() => {
+    const unsupported = async () => {
+      throw new Error('Not available when using Overtone on this device');
+    };
+    return { state, retry: async () => undefined, changeServer: unsupported, login: unsupported, setup: unsupported, logout: async () => undefined };
+  }, [state]);
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
 export function SessionProvider({ children }: { children: ReactNode }) {
   const api = useApi();
+  if (api instanceof HttpTransport) return <ServerSession api={api}>{children}</ServerSession>;
+  return <StandaloneSession api={api}>{children}</StandaloneSession>;
+}
+
+/** Server mode: server URL, first-run setup, sign-in, token refresh. */
+function ServerSession({ api, children }: { api: HttpTransport; children: ReactNode }) {
   const [state, setState] = useState<SessionPhase>({ phase: 'booting' });
 
   const evaluate = useCallback(async () => {

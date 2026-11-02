@@ -23,10 +23,15 @@ export function PlayerProvider({ children, controller }: { children: ReactNode; 
   const api = useApi();
   const [player] = useState(() => {
     if (controller) return controller;
-    const fetchLinks: LinkFetcher = async (trackIds) => {
-      const res = await api.post<StreamUrlsResponseDto>('/api/stream-urls', { trackIds });
+    const fetchLinks: LinkFetcher = async (trackIds, opts) => {
+      const res = await api.post<StreamUrlsResponseDto>('/api/stream-urls', { trackIds, ...(opts?.refresh?.length ? { refresh: opts.refresh } : {}) });
       return {
-        links: new Map(res.items.map((i) => [i.trackId, { url: api.url(i.url), expiresAt: Date.parse(i.expiresAt), source: i.source }])),
+        links: new Map(
+          res.items.map((i) => [
+            i.trackId,
+            { url: api.url(i.url), expiresAt: Date.parse(i.expiresAt), source: i.source, ...(i.headers ? { headers: i.headers } : {}) },
+          ]),
+        ),
         unavailable: res.unavailable,
       };
     };

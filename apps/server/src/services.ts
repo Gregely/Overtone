@@ -1,23 +1,29 @@
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
+import {
+  createCore,
+  type CoreApi,
+  type CoverArtService,
+  type Database,
+  type DeviceLoginService,
+  type LibraryRepo,
+  type LibraryScanner,
+  type Logger,
+  type Matcher,
+  type MatchWorker,
+  type MusicBrainzApi,
+  type ProviderRegistry,
+  type ResolveCache,
+  type SourceManager,
+} from '@overtone/core';
 import type { ScanStatusDto } from '@overtone/shared';
 import { AuthService } from './auth/service.js';
 import type { Config } from './config.js';
 import { deriveKey } from './crypto/keys.js';
 import { SecretBox } from './crypto/secret-box.js';
-import { openDatabase, type Db } from './db/index.js';
-import type { BaseLogger } from './http/redact.js';
-import { LibraryRepo } from './library/repo.js';
-import { LibraryScanner, MatchWorker } from './library/scanner.js';
-import { CoverArtService } from './metadata/coverart/service.js';
-import { Matcher } from './metadata/matcher/matcher.js';
-import { MusicBrainzClient, mbUserAgent } from './metadata/musicbrainz/client.js';
-import type { MusicBrainzApi } from './metadata/musicbrainz/types.js';
+import { coreDatabase, openDatabase, type Db } from './db/index.js';
+import { EncryptedColumnSecretStore, FsBlobStore } from './platform.js';
 import { createDefaultRegistry } from './providers/index.js';
-import type { ProviderRegistry } from './providers/registry.js';
-import { ResolveCache } from './providers/resolve-cache.js';
-import { DeviceLoginService } from './sources/device-login.js';
-import { SourceManager } from './sources/manager.js';
 import { StreamService } from './streaming/service.js';
 
 export interface ServiceOverrides {
@@ -29,9 +35,17 @@ export interface ServiceOverrides {
   now?: () => number;
 }
 
+/**
+ * The server = @overtone/core (library, sources, matching, scanning) plus the
+ * parts only a multi-device server needs: accounts/tokens and the stream
+ * proxy. Routes are thin HTTP adapters over `api` (CoreApi).
+ */
 export interface Services {
   config: Config;
+  /** Raw better-sqlite3 handle (auth uses it synchronously). */
   db: Db;
+  /** Core's async view of the same connection. */
+  database: Database;
   auth: AuthService;
   registry: ProviderRegistry;
   sources: SourceManager;
@@ -44,94 +58,69 @@ export interface Services {
   matchWorker: MatchWorker;
   streams: StreamService;
   covers: CoverArtService;
-  matchStatus(): ScanStatusDto['matching'];
+  api: CoreApi;
+  matchStatus(): Promise<ScanStatusDto['matching']>;
   /** Start scans, watchers and matching. Not called in route tests. */
-  startBackground(): void;
+  startBackground(): Promise<void>;
   close(): Promise<void>;
 }
 
-export function createServices(
-  config: Config,
-  logger: BaseLogger & { child(b: object): BaseLogger },
-  o: ServiceOverrides = {},
-): Services {
+export function createServices(config: Config, logger: Logger, o: ServiceOverrides = {}): Services {
   const db = o.db ?? openDatabase(path.join(config.dataDir, 'overtone.db'));
+  const database = coreDatabase(db);
   const now = o.now ?? Date.now;
-  const userAgent = mbUserAgent(config.version, config.mbContact);
   const registry = o.registry ?? createDefaultRegistry({ premiumizeClientId: config.premiumizeClientId });
   const auth = new AuthService(db, { masterKey: config.secretKey, multiUser: config.multiUser, now });
-  const sources = new SourceManager({
-    db,
+  const core = createCore({
+    db: database,
     registry,
-    secretBox: new SecretBox(deriveKey(config.secretKey, 'secrets')),
+    secrets: new EncryptedColumnSecretStore(database, new SecretBox(deriveKey(config.secretKey, 'secrets'))),
+    blobs: new FsBlobStore(config.dataDir),
     logger,
-    userAgent,
-    now,
+    version: config.version,
+    contact: config.mbContact,
+    clock: { now, sleep: (ms) => new Promise((r) => setTimeout(r, ms)), schedule: (ms, fn) => {
+      const t = setTimeout(fn, ms).unref();
+      return () => clearTimeout(t);
+    } },
+    ...(o.mb ? { mb: o.mb } : {}),
     ...(o.fetch ? { fetch: o.fetch } : {}),
   });
-  const deviceLogins = new DeviceLoginService({ registry, logger, userAgent, now, ...(o.fetch ? { fetch: o.fetch } : {}) });
-  const library = new LibraryRepo(db, now);
-  const resolver = new ResolveCache({ now });
-  const mb = o.mb ?? new MusicBrainzClient({ db, userAgent, now, ...(o.fetch ? { fetch: o.fetch } : {}) });
-  const matcher = new Matcher(mb);
-  const matchWorker = new MatchWorker(library, matcher, logger.child({ component: 'matcher' }));
-  const scanner = new LibraryScanner({
-    sources,
-    library,
-    resolver,
-    logger: logger.child({ component: 'scanner' }),
-    now,
-    onTagged: () => matchWorker.kick(),
-    ...(o.fetch ? { fetch: o.fetch } : {}),
-  });
-  const streams = new StreamService({ sources, resolver, logger, ...(o.fetch ? { fetch: o.fetch } : {}) });
-  const covers = new CoverArtService({
-    dataDir: config.dataDir,
-    library,
-    sources,
-    logger,
-    userAgent,
-    now,
-    ...(o.fetch ? { fetch: o.fetch } : {}),
-  });
-
-  // Config changes invalidate cached stream links for that source.
-  sources.onChange((e) => resolver.invalidate(e.sourceId));
+  const streams = new StreamService({ sources: core.sources, resolver: core.resolver, logger, ...(o.fetch ? { fetch: o.fetch } : {}) });
 
   return {
     config,
     db,
+    database,
     auth,
     registry,
-    sources,
-    deviceLogins,
-    library,
-    resolver,
-    mb,
-    matcher,
-    scanner,
-    matchWorker,
+    sources: core.sources,
+    deviceLogins: core.deviceLogins,
+    library: core.library,
+    resolver: core.resolver,
+    mb: core.mb,
+    matcher: core.matcher,
+    scanner: core.scanner,
+    matchWorker: core.matchWorker,
     streams,
-    covers,
-    matchStatus: () => ({ pending: library.pendingMatchCount(), active: matchWorker.active, ...library.reviewCounts() }),
-    startBackground() {
-      ensureDefaultMusicSource(config, sources, logger);
-      scanner.start(config.scanIntervalMinutes);
-      matchWorker.kick();
+    covers: core.covers,
+    api: core.api,
+    matchStatus: () => core.api.matchStatus(),
+    async startBackground() {
+      await ensureDefaultMusicSource(config, core.sources, logger);
+      await core.start({ intervalMinutes: config.scanIntervalMinutes, scanAll: true });
     },
     async close() {
-      matchWorker.stop();
-      await scanner.stop();
-      await sources.disposeAll();
-      db.close();
+      // core.close() closes the async wrapper, which closes the shared handle.
+      await core.close();
     },
   };
 }
 
 /** First boot convenience: a "Music" LocalFolder source for the Docker /music mount. */
-function ensureDefaultMusicSource(config: Config, sources: SourceManager, logger: BaseLogger): void {
-  if (!config.musicDir || sources.list().length > 0) return;
+async function ensureDefaultMusicSource(config: Config, sources: SourceManager, logger: Logger): Promise<void> {
+  if (!config.musicDir || (await sources.list()).length > 0) return;
   if (!existsSync(config.musicDir) || !statSync(config.musicDir).isDirectory()) return;
-  sources.create({ providerId: 'local-folder', name: 'Music', config: { path: config.musicDir } });
+  await sources.create({ providerId: 'local-folder', name: 'Music', config: { path: config.musicDir } });
   logger.info({ path: config.musicDir }, 'created default music folder source');
 }

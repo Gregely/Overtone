@@ -1,0 +1,11 @@
+{
+  // The transport parity test imports the web app's ApiClient transports,
+  // which use bundler-style (extensionless) imports.
+  "extends": "./tsconfig.tests.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler"
+  },
+  "include": ["apps/server/src/parity.test.ts", "apps/web/src/env.d.ts"],
+  "exclude": []
+}

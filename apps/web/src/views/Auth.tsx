@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ApiError } from '../api/client';
 import { isNativeApp } from '../platform/server-url';
+import { useMode } from '../app/mode';
 import { useSession } from '../session/session';
 import { Icon } from '../ui/Icon';
 import { errorMessage } from '../ui/states';
@@ -108,6 +109,20 @@ export function ServerField({ serverUrl, startEditing = false }: { serverUrl: st
         </div>
       )}
     </form>
+  );
+}
+
+/** Android: a way back to standalone mode from the server screens. */
+function UseOnDeviceLink() {
+  const mode = useMode();
+  if (!mode.canSwitch) return null;
+  return (
+    <p className="small muted">
+      No server?{' '}
+      <button type="button" className="btn small ghost" onClick={() => void mode.switchMode('standalone')}>
+        Use Overtone on this device instead
+      </button>
+    </p>
   );
 }
 
@@ -249,6 +264,7 @@ export function LoginScreen({ serverUrl, notice }: { serverUrl: string | null; n
         disabled={!serverUrl}
         onSubmit={(username, password) => session.login({ username, password, deviceName: deviceName() })}
       />
+      <UseOnDeviceLink />
     </AuthCard>
   );
 }
@@ -286,12 +302,12 @@ export function UnreachableScreen({ serverUrl }: { serverUrl: string }) {
   );
 }
 
-export function BootScreen() {
+export function BootScreen({ label = 'Connecting…' }: { label?: string }) {
   return (
     <main className="auth" id="main">
       <div className="state" role="status">
         <div className="spinner" aria-hidden="true" />
-        <span>Connecting…</span>
+        <span>{label}</span>
       </div>
     </main>
   );

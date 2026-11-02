@@ -8,8 +8,12 @@
     "lib": ["ES2023", "DOM"],
     "types": ["node"],
     "paths": {
-      "@overtone/shared": ["./packages/shared/src/index.ts"]
+      "@overtone/shared": ["./packages/shared/src/index.ts"],
+      "@overtone/core": ["./packages/core/src/index.ts"],
+      "@overtone/core/testing": ["./packages/core/src/testing/index.ts"]
     }
   },
-  "include": ["packages/*/src", "apps/server/src", "vitest.config.ts"]
+  "include": ["packages/*/src", "apps/server/src", "vitest.config.ts"],
+  // Imports web sources (bundler-style paths): checked by tsconfig.parity.json.
+  "exclude": ["apps/server/src/parity.test.ts"]
 }

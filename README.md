@@ -72,6 +72,22 @@ npm run dev:web
 The service worker is only active in production builds (`npm run build`,
 then serve `apps/web/dist` from the server with `OVERTONE_WEB_DIR`).
 
+## Standalone or server: which to choose?
+
+| | **Standalone** (Android app default) | **Server mode** |
+|---|---|---|
+| What runs where | Everything inside the app on your phone | An Overtone server (e.g. Raspberry Pi) + browser/app clients |
+| Setup | Install the APK, add sources | Docker, accounts, HTTPS for remote access |
+| Library | One device | Shared by all your devices and users |
+| Music on the device | "This device" folders (Android folder picker) | Folders on the server |
+| Keys and tokens | Android Keystore on the phone | Encrypted on the server; never sent to clients |
+| Streaming | Device plays provider links directly | Server proxies (or redirects when safe) |
+
+Pick **standalone** for one phone and no infrastructure; pick **server mode**
+for several devices or a shared library. The app asks on first launch and you
+can switch in *Settings › Mode*; each mode keeps its own data. Architecture:
+[docs/PLAN.md §6b](docs/PLAN.md).
+
 ## Android app
 
 A native Android app built from the same code (Capacitor). It plays in the

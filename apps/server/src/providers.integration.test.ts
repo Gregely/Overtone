@@ -90,7 +90,7 @@ describe('"Log in with…" (device login) over the API', () => {
     expect(created.body).not.toContain('RT-from-login');
     expect(created.body).not.toContain('AK-from-login');
     expect(created.json().config).toEqual({ values: {}, secretsSet: ['apiKey'], signedInWithDeviceLogin: true });
-    h.services.sources.instance(created.json().id);
+    await h.services.sources.instance(created.json().id);
     expect(seen.at(-1)).toMatchObject({ apiKey: 'AK-from-login', refreshToken: 'RT-from-login' });
 
     // Single use.
@@ -101,9 +101,9 @@ describe('"Log in with…" (device login) over the API', () => {
 
   it('pasting a new key clears credentials from an earlier login', async () => {
     h = await createHarness({ plugins: [devicePlugin] });
-    const src = h.services.sources.create({ providerId: 'device-demo', config: {} }, { apiKey: 'AK-from-login', refreshToken: 'RT-from-login' });
+    const src = await h.services.sources.create({ providerId: 'device-demo', config: {} }, { apiKey: 'AK-from-login', refreshToken: 'RT-from-login' });
     await h.app.inject({ method: 'PATCH', url: `/api/sources/${src.id}`, headers: h.auth, payload: { config: { apiKey: 'typed-key' } } });
-    h.services.sources.instance(src.id);
+    await h.services.sources.instance(src.id);
     expect(seen.at(-1)).toMatchObject({ apiKey: 'typed-key' });
     expect(seen.at(-1)).not.toHaveProperty('refreshToken');
   });
@@ -172,7 +172,7 @@ describe('Subsonic source end to end', () => {
     const xml = () => new Response('<subsonic-response status="failed"><error code="70"/></subsonic-response>', { headers: { 'content-type': 'text/xml' } });
     const fetch = fetchMock(xml);
     h = await createHarness({ fetch: fetch as unknown as typeof globalThis.fetch });
-    const src = h.services.sources.create({ providerId: 'subsonic', name: 'Navidrome', config: { url: BASE, username: 'u', password: 'pw' } });
+    const src = await h.services.sources.create({ providerId: 'subsonic', name: 'Navidrome', config: { url: BASE, username: 'u', password: 'pw' } });
     await h.services.scanner.scanSource(src.id);
     const track = (await h.app.inject({ url: '/api/library/tracks', headers: h.auth })).json().items[0];
     const { items } = (await h.app.inject({ method: 'POST', url: '/api/stream-urls', headers: h.auth, payload: { trackIds: [track.id] } })).json();

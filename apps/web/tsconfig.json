@@ -25,6 +25,9 @@
     "paths": {
       "@overtone/shared": [
         "../../packages/shared/src/index.ts"
+      ],
+      "@overtone/core": [
+        "../../packages/core/src/index.ts"
       ]
     }
   },

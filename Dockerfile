@@ -7,10 +7,12 @@ FROM node:22-bookworm-slim AS web
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
+COPY packages/core/package.json packages/core/
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 RUN npm ci --workspace @overtone/shared --workspace @overtone/web --include-workspace-root --ignore-scripts
 COPY packages/shared packages/shared
+COPY packages/core packages/core
 COPY apps/web apps/web
 RUN npm run build -w @overtone/web
 
@@ -23,13 +25,15 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
+COPY packages/core/package.json packages/core/
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
-RUN npm ci --workspace @overtone/shared --workspace @overtone/server --include-workspace-root
+RUN npm ci --workspace @overtone/shared --workspace @overtone/core --workspace @overtone/server --include-workspace-root
 COPY packages/shared packages/shared
+COPY packages/core packages/core
 COPY apps/server apps/server
-RUN npx tsc -b packages/shared apps/server \
- && npm prune --omit=dev --workspace @overtone/shared --workspace @overtone/server --include-workspace-root
+RUN npx tsc -b packages/shared packages/core apps/server \
+ && npm prune --omit=dev --workspace @overtone/shared --workspace @overtone/core --workspace @overtone/server --include-workspace-root
 
 FROM node:22-bookworm-slim
 ENV NODE_ENV=production \
@@ -42,6 +46,8 @@ COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/packages/shared/package.json packages/shared/
 COPY --from=build /app/packages/shared/dist packages/shared/dist
+COPY --from=build /app/packages/core/package.json packages/core/
+COPY --from=build /app/packages/core/dist packages/core/dist
 COPY --from=build /app/apps/server/package.json apps/server/
 COPY --from=build /app/apps/server/dist apps/server/dist
 COPY --from=web /app/apps/web/dist web

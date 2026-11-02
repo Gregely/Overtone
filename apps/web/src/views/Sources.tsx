@@ -4,6 +4,8 @@ import type { ConfigField, ConnectionTestResultDto, ProviderManifestDto, SourceD
 import { ApiError } from '../api/client';
 import { useDeleteSource, useProviders, useSaveSource, useScan, useScanStatus, useSource, useSources, useTestSource } from '../api/hooks';
 import { useIsAdmin } from '../app/context';
+import { useMode } from '../app/mode';
+import { pickDeviceFolder } from '../platform/device-folder';
 import { Page } from '../layout/Page';
 import { Dialog } from '../ui/Dialog';
 import { plural, relativeTime } from '../ui/format';
@@ -12,7 +14,7 @@ import { EmptyState, errorMessage, QueryView, Spinner } from '../ui/states';
 import { DeviceLogin } from './DeviceLogin';
 
 const CATEGORY: Record<ProviderManifestDto['category'], string> = {
-  local: 'On this server',
+  local: 'Local files',
   server: 'Music servers',
   public: 'Public archives',
   debrid: 'Debrid accounts',
@@ -175,6 +177,8 @@ function SourceEdit() {
 }
 
 function ProviderPicker({ providers }: { providers: ProviderManifestDto[] }) {
+  const { mode } = useMode();
+  const label = (c: ProviderManifestDto['category']) => (c === 'local' ? (mode === 'standalone' ? 'On this device' : 'On this server') : CATEGORY[c]);
   const groups = (Object.keys(CATEGORY) as Array<ProviderManifestDto['category']>)
     .map((c) => [c, providers.filter((p) => p.category === c)] as const)
     .filter(([, ps]) => ps.length);
@@ -183,7 +187,7 @@ function ProviderPicker({ providers }: { providers: ProviderManifestDto[] }) {
       <p className="muted">Overtone only plays what's already in a source. It never searches for or downloads new content.</p>
       {groups.map(([cat, ps]) => (
         <section key={cat} aria-labelledby={`cat-${cat}`} className="stack-sm">
-          <h2 id={`cat-${cat}`}>{CATEGORY[cat]}</h2>
+          <h2 id={`cat-${cat}`}>{label(cat)}</h2>
           <ul className="sheet-actions card" style={{ padding: 6 }}>
             {ps.map((p) => (
               <li key={p.id}>
@@ -240,14 +244,20 @@ export function buildConfig(
 
 function SourceForm({ provider, source }: { provider: ProviderManifestDto; source?: SourceDto | undefined }) {
   const navigate = useNavigate();
+  const { mode } = useMode();
   const save = useSaveSource();
   const test = useTestSource();
-  const fields = useMemo(() => provider.configSchema.fields.filter((f) => !f.hidden), [provider]);
+  // Fields filled in by a picker widget (e.g. the folder's display name) aren't shown on their own.
+  const fields = useMemo(() => {
+    const filledByWidget = new Set(provider.configSchema.fields.flatMap((f) => ('labelKey' in f && f.labelKey ? [f.labelKey] : [])));
+    return provider.configSchema.fields.filter((f) => !f.hidden && !filledByWidget.has(f.key));
+  }, [provider]);
+  const allVisible = useMemo(() => provider.configSchema.fields.filter((f) => !f.hidden), [provider]);
   const [name, setName] = useState(source?.name ?? provider.name);
   const [enabled, setEnabled] = useState(source?.enabled ?? true);
   const [streamMode, setStreamMode] = useState<StreamMode>(source?.streamMode ?? 'proxy');
   const [priority, setPriority] = useState(String(source?.priority ?? ''));
-  const [values, setValues] = useState<FormValues>(() => initialValues(fields, source));
+  const [values, setValues] = useState<FormValues>(() => initialValues(allVisible, source));
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [clear, setClear] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -258,7 +268,7 @@ function SourceForm({ provider, source }: { provider: ProviderManifestDto; sourc
   // A completed login replaces these secrets, so they're no longer required in the form.
   const loginCovers = new Set(deviceLogin || source?.config.signedInWithDeviceLogin ? (loginSpec?.replaces ?? []) : []);
 
-  const config = () => buildConfig(fields, values, secrets, clear);
+  const config = () => buildConfig(allVisible, values, secrets, clear);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -313,6 +323,9 @@ function SourceForm({ provider, source }: { provider: ProviderManifestDto; sourc
             field={f}
             value={values[f.key]}
             onChange={(v) => setValues((s) => ({ ...s, [f.key]: v }))}
+            values={values}
+            onValues={(patch) => setValues((s) => ({ ...s, ...patch }))}
+            secretWhere={mode === 'standalone' ? 'on this device' : 'on the server'}
             secret={secrets[f.key] ?? ''}
             onSecret={(v) => setSecrets((s) => ({ ...s, [f.key]: v }))}
             isSaved={saved.has(f.key)}
@@ -323,7 +336,8 @@ function SourceForm({ provider, source }: { provider: ProviderManifestDto; sourc
           />
         ))}
 
-        {provider.capabilities.redirectable && (
+        {/* Standalone mode has no proxy: links go straight to the player, so there's nothing to choose. */}
+        {provider.capabilities.redirectable && mode === 'server' && (
           <fieldset className="field">
             <legend>Streaming</legend>
             <label className="checkbox">
@@ -443,6 +457,9 @@ function SchemaField(props: {
   field: ConfigField;
   value: string | boolean | undefined;
   onChange: (v: string | boolean) => void;
+  values: FormValues;
+  onValues: (patch: FormValues) => void;
+  secretWhere: string;
   secret: string;
   onSecret: (v: string) => void;
   isSaved: boolean;
@@ -504,7 +521,7 @@ function SchemaField(props: {
                     : 'Saved. Leave blank to keep'
                   : (f.placeholder ?? '')
             }
-            help={f.help ?? (props.isSaved ? 'Stored encrypted on the server; it is never shown again.' : undefined)}
+            help={f.help ?? (props.isSaved ? `Stored encrypted ${props.secretWhere}; it is never shown again.` : undefined)}
             error={error}
           />
           {props.isSaved && !f.required && (
@@ -515,6 +532,9 @@ function SchemaField(props: {
         </div>
       );
     default:
+      if ('widget' in f && f.widget === 'device-folder') {
+        return <FolderField id={id} field={f} uri={String(props.value ?? '')} name={String((f.labelKey && props.values[f.labelKey]) ?? '')} onPick={props.onValues} error={error} />;
+      }
       return (
         <TextInput
           id={id}
@@ -529,4 +549,58 @@ function SchemaField(props: {
         />
       );
   }
+}
+
+/** "This device" folder: the Android folder picker instead of a text box. */
+function FolderField({
+  id,
+  field: f,
+  uri,
+  name,
+  onPick,
+  error,
+}: {
+  id: string;
+  field: Extract<ConfigField, { type: 'string' | 'url' | 'path' }>;
+  uri: string;
+  name: string;
+  onPick: (patch: FormValues) => void;
+  error?: string | undefined;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const pick = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      const folder = await pickDeviceFolder();
+      if (folder) onPick({ [f.key]: folder.uri, ...(f.labelKey ? { [f.labelKey]: folder.name } : {}) });
+    } catch (err) {
+      setProblem(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="field" role="group" aria-labelledby={`${id}-label`}>
+      <span id={`${id}-label`} className="label">
+        {f.label}
+        {f.required ? <span aria-hidden="true"> *</span> : null}
+      </span>
+      <div className="row wrap">
+        <span className="truncate" style={{ flex: 1 }}>
+          <Icon name="folder" size={18} /> {uri ? name || 'Chosen folder' : <span className="muted">No folder chosen</span>}
+        </span>
+        <button type="button" className="btn" onClick={() => void pick()} disabled={busy} aria-describedby={f.help ? `${id}-help` : undefined}>
+          {uri ? 'Change folder' : 'Choose folder'}
+        </button>
+      </div>
+      {f.help && (
+        <p id={`${id}-help`} className="help">
+          {f.help}
+        </p>
+      )}
+      {(problem || error) && <p className="error-text">{problem ?? error}</p>}
+    </div>
+  );
 }

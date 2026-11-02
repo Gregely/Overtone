@@ -1,8 +1,7 @@
-import { createReadStream } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 import { bearerToken } from '../http/auth-hooks.js';
 import { ApiError } from '../http/errors.js';
-import { COVER_SIZES, type CoverSize } from '../metadata/coverart/service.js';
+import { COVER_SIZES, type CoverSize } from '@overtone/core';
 import type { Services } from '../services.js';
 import { idParam } from './auth.js';
 
@@ -25,7 +24,7 @@ export async function mediaRoutes(app: FastifyInstance, s: Services): Promise<vo
       const bearer = bearerToken(req);
       const viaBearer = !viaToken && bearer ? s.auth.verifyAccessToken(bearer) : null;
       if (!viaToken && !viaBearer) throw ApiError.unauthorized('invalid_stream_token', 'Stream link expired; request a new one');
-      const target = s.library.streamTarget(id);
+      const target = await s.library.streamTarget(id);
       if (!target || !target.enabled) throw ApiError.notFound('Track file');
       return s.streams.serve(target.file, req, reply);
     },
@@ -51,7 +50,7 @@ export async function mediaRoutes(app: FastifyInstance, s: Services): Promise<vo
       return reply
         .header('cache-control', 'private, max-age=604800')
         .type(img.mimeType)
-        .send(createReadStream(img.file));
+        .send(Buffer.from(img.data.buffer, img.data.byteOffset, img.data.byteLength));
     },
   );
 }

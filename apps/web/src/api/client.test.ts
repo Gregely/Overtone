@@ -1,7 +1,7 @@
 import type { AuthTokensDto } from '@overtone/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { memoryStore } from '../platform/storage';
-import { ApiClient, ApiError, NetworkError } from './client';
+import { ApiError, HttpTransport, NetworkError } from './client';
 
 const NOW = Date.parse('2026-06-01T12:00:00Z');
 const tokens = (n: number, accessExpiresInMs = 15 * 60_000): AuthTokensDto => ({
@@ -18,14 +18,14 @@ async function make(stored: AuthTokensDto | null, handler: (url: string, init: R
   const storage = memoryStore({ 'overtone.serverUrl': 'http://srv' });
   if (stored) await storage.set('overtone.session', JSON.stringify({ serverUrl: 'http://srv', tokens: stored }));
   const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => handler(String(url), init ?? {}));
-  const client = new ApiClient({ storage, serverUrl: null, fetch: fetch as unknown as typeof globalThis.fetch, now: () => NOW, withLock: (_n, fn) => fn() });
+  const client = new HttpTransport({ storage, serverUrl: null, fetch: fetch as unknown as typeof globalThis.fetch, now: () => NOW, withLock: (_n, fn) => fn() });
   await client.restore(null);
   return { client, fetch, storage };
 }
 
 const authHeader = (init: RequestInit) => (init.headers as Record<string, string>).authorization;
 
-describe('ApiClient', () => {
+describe('HttpTransport', () => {
   it('sends the access token', async () => {
     const { client, fetch } = await make(tokens(1), () => json({ ok: 1 }));
     await client.get('/api/library/home');

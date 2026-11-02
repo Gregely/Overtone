@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    // Browser + Node common ground only: no "node" types, so Buffer, process,
+    // and node:* imports fail to compile here. Core must run in the Android WebView.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": []
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/testing"],
+  "references": [{ "path": "../shared" }]
+}

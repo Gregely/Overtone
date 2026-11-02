@@ -48,8 +48,32 @@ function defaultLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
 
 type Listener = () => void;
 
+export type AppMode = 'server' | 'standalone';
+
 /**
- * Thin, typed REST client.
+ * What the UI talks to. Two transports implement it:
+ *  - HttpTransport: an Overtone server over HTTP (server mode);
+ *  - EmbeddedTransport: @overtone/core running inside the app (standalone).
+ * Views and hooks only use this interface, so they work the same either way.
+ */
+export interface ApiClient {
+  readonly mode: AppMode;
+  /** Server mode: the server's base URL. Standalone: null. */
+  readonly serverUrl: string | null;
+  readonly user: UserDto | null;
+  readonly reachability: Reachability;
+  subscribe(fn: Listener): () => void;
+  get<T>(path: string, query?: Record<string, string | number | boolean | undefined | null>, signal?: AbortSignal): Promise<T>;
+  post<T>(path: string, body?: unknown): Promise<T>;
+  patch<T>(path: string, body: unknown): Promise<T>;
+  delete<T = void>(path: string): Promise<T>;
+  request<T>(method: string, path: string, opts: { body?: unknown; signal?: AbortSignal }): Promise<T>;
+  /** Absolute URL for a media path returned by the API (stream links, cover art). */
+  url(path: string): string;
+}
+
+/**
+ * HTTP transport: a thin, typed REST client for an Overtone server.
  *
  * - Attaches the access token, refreshing it shortly before expiry or on a 401.
  * - Refresh tokens are single-use: refreshes are single-flight within a tab and
@@ -58,7 +82,8 @@ type Listener = () => void;
  *   the server would treat as theft and revoke the session).
  * - Distinguishes "server said no" (ApiError) from "couldn't reach it" (NetworkError).
  */
-export class ApiClient {
+export class HttpTransport implements ApiClient {
+  readonly mode = 'server' as const;
   readonly #storage: KeyValueStore;
   readonly #fetch: typeof fetch;
   readonly #now: () => number;

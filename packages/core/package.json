@@ -1,0 +1,43 @@
+{
+  "name": "@overtone/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Framework-free Overtone domain logic: providers, metadata, library, scanning. Runs in Node (server) and in the browser/Android WebView (standalone).",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./src/testing/index.ts",
+      "default": "./src/testing/index.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@overtone/shared": "0.1.0",
+    "music-metadata": "^12.3.3",
+    "strtok3": "^10.6.3"
+  },
+  "peerDependencies": {
+    "sql.js": "^1.15.2"
+  },
+  "peerDependenciesMeta": {
+    "sql.js": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/sql.js": "^1.4.11",
+    "sql.js": "1.15.2",
+    "better-sqlite3": "^13.0.3"
+  }
+}

@@ -38,7 +38,7 @@ describe('Android app (Capacitor WebView + Media3) against the server', () => {
     await mkdir(path.join(music, 'A/B'), { recursive: true });
     await writeFile(path.join(music, 'A/B/01 - Song.mp3'), makeMp3({ title: 'Song', artist: 'A', album: 'B' }, 200));
     h = await createHarness();
-    const src = h.services.sources.create({ providerId: 'local-folder', config: { path: music, watch: false } });
+    const src = await h.services.sources.create({ providerId: 'local-folder', config: { path: music, watch: false } });
     await h.services.scanner.scanSource(src.id);
     const track = (await h.app.inject({ url: '/api/library/tracks', headers: h.auth })).json().items[0];
     const { items } = (await h.app.inject({ method: 'POST', url: '/api/stream-urls', headers: { ...h.auth, origin: 'http://localhost' }, payload: { trackIds: [track.id] } })).json();

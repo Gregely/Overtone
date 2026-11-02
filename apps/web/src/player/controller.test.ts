@@ -123,7 +123,8 @@ describe('PlayerController', () => {
       engine.emit({ type: 'error', message: 'MEDIA_ERR_NETWORK' }); // e.g. token expired → 401
       expect(player.getSnapshot().status).toBe('loading');
       await flush();
-      expect(fetchLinks).toHaveBeenLastCalledWith(expect.arrayContaining([1]));
+      // The failed track's link is re-resolved, not reused (standalone mode relies on this).
+      expect(fetchLinks).toHaveBeenLastCalledWith(expect.arrayContaining([1]), { refresh: [1] });
       expect(engine.lastLoad()).toBe('load https://srv/api/stream/1?v=2 @73.5 autoplay');
       engine.emit({ type: 'playing' });
       expect(player.getSnapshot()).toMatchObject({ status: 'playing', current: { track: { id: 1 } }, error: null });

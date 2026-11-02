@@ -580,6 +580,59 @@ See [android.md](android.md) for build, install and test details.
   verified (no emulator available); [android.md](android.md) has the manual
   checklist.
 
+## 6b. Standalone mode (Stage 5.5 — built)
+
+The Android app can run with **no server**. Domain logic moved into a
+framework-free package, `packages/core` (`@overtone/core`): providers (except
+the Node-only Local folder), ResolveCache, MusicBrainz client/matcher,
+Cover Art Archive, LibraryRepo, scanner + match worker, SourceManager,
+DeviceLoginService, library backup, and `CoreApi`, the operations behind the
+REST API. Core compiles without Node types (no `Buffer`, `process`, `node:*`).
+
+```
+  React UI (views, hooks, player)
+            │  ApiClient interface (get/post/patch/delete/url)
+     ┌──────┴────────────────────┐
+ HttpTransport               EmbeddedTransport
+ (server mode)               (standalone mode)
+     │ HTTP                       │ in-process router (same REST paths)
+ Fastify routes ──────┐     ┌─────┘
+ + auth, stream proxy │     │
+                      ▼     ▼
+                 @overtone/core  ── CoreApi, providers, metadata, library
+                      │ injected platform
+   DB: better-sqlite3 | Capacitor SQLite | sql.js
+   secrets: encrypted column | Android Keystore | WebCrypto (browser dev)
+   fetch: Node fetch | CapacitorHttp (no CORS) | browser fetch
+   clock: Node timers | native timers (BackgroundWork.sleep)
+   blobs: <dataDir>/artwork | app files dir | memory
+```
+
+- **Database:** async `Database` interface (run/get/all/exec/transaction) over
+  a driver; one connection, statements serialized, transactions roll back on
+  error. Same migrations everywhere (no `RETURNING`; the Capacitor plugin
+  emulates it incorrectly for upserts). Migration 2 adds the persistent scan
+  queue (`jobs`) and `app_settings`.
+- **Standalone specifics:** single local user, no auth layer; secrets via the
+  Keystore-backed `SecureStorage` (never in SQLite); provider HTTP through
+  CapacitorHttp with Capacitor bridge logging off; debrid/Subsonic links go
+  straight to Media3 (expired link → `refresh` re-resolve once, resume at the
+  same position); redirect/proxy settings hidden; "This device" source via the
+  Storage Access Framework (persisted tree permissions, ranged tag reads with
+  music-metadata, `content://` playback, revoked access → clear source error,
+  library kept); scans/matching keep running in a `dataSync` foreground
+  service with native timers and resume from the database after the app is
+  killed; library export/import with optional passphrase-encrypted secrets
+  (PBKDF2-SHA256 + AES-GCM); reset library.
+- **Modes:** first launch asks "Use on this device (recommended)" or "Connect
+  to my server (advanced)"; Settings › Mode switches. Each mode keeps its own
+  data; switching deletes nothing.
+- **Verification:** core suites run on better-sqlite3 and sql.js; transport
+  parity tests compare HttpTransport (real Fastify app) with EmbeddedTransport
+  (both drivers) call by call; browser smoke test runs standalone mode with
+  sql.js. Android-specific pieces are compiled and unit-tested (Robolectric)
+  but **not run on a device**; see docs/android.md.
+
 ## 7. Testing
 
 - Vitest across the workspace.
@@ -601,6 +654,7 @@ See [android.md](android.md) for build, install and test details.
 | 3 | Web app: setup/login, library, search, album, player (link refresh), Media Session, PWA/offline, Sources UI, fix match, themes, a11y, e2e | ✅ |
 | 4 | Subsonic, Internet Archive, Real-Debrid/AllDebrid/TorBox/Premiumize adapters, generic "Log in with…", stream hardening, e2e with fake services | ✅ |
 | 5 | Capacitor Android: Media3 NativePlayer service, notification/focus/noisy, Keystore storage, cleartext policy, build/sign scripts, docs | ✅ (device testing pending) |
+| 5.5 | Standalone mode: `@overtone/core`, ApiClient transports (HTTP / embedded), Capacitor SQLite, Keystore secrets, native HTTP, "This device" (SAF), background work, export/import | ✅ (device testing pending) |
 | 6 | Polish, test coverage, README/docs | |
 
 ## 9. Decisions

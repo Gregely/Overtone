@@ -7,12 +7,13 @@ import { requireAuth } from './http/auth-hooks.js';
 import { ApiError } from './http/errors.js';
 import { redactUrl } from './http/redact.js';
 import { registerWebApp } from './http/web-app.js';
-import { PROVIDER_ERROR_HTTP_STATUS, ProviderError } from './providers/errors.js';
+import { PROVIDER_ERROR_HTTP_STATUS, ProviderError } from '@overtone/core';
 import { accountRoutes, publicAuthRoutes } from './routes/auth.js';
 import { libraryRoutes } from './routes/library.js';
 import { mediaRoutes } from './routes/media.js';
 import { sourceRoutes } from './routes/sources.js';
 import { createServices, type ServiceOverrides, type Services } from './services.js';
+import type { Logger } from '@overtone/core';
 
 export interface BuildAppOptions extends ServiceOverrides {
   config: Config;
@@ -35,7 +36,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<{ app: FastifyIns
     ajv: { customOptions: { removeAdditional: false, coerceTypes: true, useDefaults: true } },
   });
 
-  const services = createServices(config, app.log, opts);
+  const services = createServices(config, app.log as unknown as Logger, opts);
   app.decorateRequest('user', null);
   app.addHook('onClose', () => services.close());
 

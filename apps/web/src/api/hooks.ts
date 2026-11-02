@@ -12,6 +12,7 @@ import type {
   ArtistDto,
   ConnectionTestResultDto,
   HomeDto,
+  LibraryInfoDto,
   LibraryFileDto,
   MatchCandidateDto,
   MatchStatus,
@@ -230,4 +231,16 @@ function invalidateAll(qc: QueryClient) {
   void qc.invalidateQueries({ queryKey: keys.library });
   void qc.invalidateQueries({ queryKey: keys.sources });
   void qc.invalidateQueries({ queryKey: keys.scan });
+}
+
+// ── standalone: Settings › Library ─────────────────────────────────────────
+
+export function useLibraryInfo(enabled: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['libraryInfo'],
+    enabled,
+    queryFn: () => api.get<LibraryInfoDto>('/api/library/info'),
+    refetchInterval: (q) => (q.state.data?.scanning || q.state.data?.matching.pending ? 3000 : false),
+  });
 }

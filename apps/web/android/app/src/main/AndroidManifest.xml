@@ -1,21 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-      Permissions (keep this list minimal; it's documented in the README):
-       - INTERNET: talk to your Overtone server.
+      Permissions (keep this list minimal; it's documented in docs/android.md):
+       - INTERNET: talk to your Overtone server, or (standalone) to your sources and MusicBrainz.
        - FOREGROUND_SERVICE + FOREGROUND_SERVICE_MEDIA_PLAYBACK: keep playing with the
          app in the background (Android 14+ requires the typed permission).
-       - POST_NOTIFICATIONS: show the media notification (Android 13+, asked when
-         you first press play).
+       - FOREGROUND_SERVICE_DATA_SYNC: standalone mode, keep a long library scan /
+         MusicBrainz matching going with a visible notification.
+       - POST_NOTIFICATIONS: show the media / scan notifications (Android 13+, asked
+         when first needed).
        - WAKE_LOCK: keep the CPU / Wi-Fi awake while streaming with the screen off.
+      "This device" folders use the Storage Access Framework picker: no storage permission.
       No analytics, ads, location, contacts, storage or other permissions.
     -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!--
+      @capacitor-community/sqlite depends on androidx.biometric (for its optional
+      biometric-locked databases, unused here), which would add these. Overtone
+      never asks for biometrics.
+    -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" tools:node="remove" />
+    <uses-permission android:name="android.permission.USE_FINGERPRINT" tools:node="remove" />
 
     <application
         android:allowBackup="false"
@@ -50,5 +62,11 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+
+        <!-- Standalone mode: long scans / matching (foreground, type dataSync). Not exported. -->
+        <service
+            android:name=".standalone.BackgroundWorkService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
     </application>
 </manifest>

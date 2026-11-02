@@ -9,6 +9,11 @@ const config: CapacitorConfig = {
   appId: app.appId,
   appName: app.appName,
   webDir: 'dist',
+  // Never log bridge traffic. With logging on (the default for debug builds)
+  // Capacitor prints every plugin call's options and result to the console,
+  // which ends up in logcat: that would include request URLs, auth headers,
+  // device-login tokens and Keystore-stored values.
+  loggingBehavior: 'none',
   server: {
     // The app is served from http://localhost inside the WebView. This lets it
     // call a plain-HTTP Overtone server on the LAN without enabling WebView
@@ -21,6 +26,15 @@ const config: CapacitorConfig = {
     allowMixedContent: false,
   },
   plugins: {
+    // Standalone mode calls CapacitorHttp.request() directly for provider
+    // traffic (no CORS). The global fetch/XHR patch stays off.
+    CapacitorHttp: { enabled: false },
+    CapacitorSQLite: {
+      // The library database isn't encrypted: secrets never go into it (they
+      // live in Keystore-backed storage). No biometric gate.
+      androidIsEncryption: false,
+      androidBiometric: { biometricAuth: false },
+    },
     SystemBars: {
       // Edge-to-edge with real env(safe-area-inset-*) values (the docs' recommended mode).
       insetsHandling: 'native',

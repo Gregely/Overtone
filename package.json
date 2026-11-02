@@ -12,11 +12,11 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -b packages/shared apps/server && npm run build -w @overtone/web",
-    "typecheck": "tsc -b packages/shared apps/server && tsc -p tsconfig.tests.json && tsc -p apps/web/tsconfig.json",
+    "build": "tsc -b packages/shared packages/core apps/server && npm run build -w @overtone/web",
+    "typecheck": "tsc -b packages/shared packages/core apps/server && tsc -p tsconfig.tests.json && tsc -p tsconfig.parity.json && tsc -p apps/web/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev:server": "tsc -b packages/shared && npm run dev -w @overtone/server",
+    "dev:server": "tsc -b packages/shared packages/core && npm run dev -w @overtone/server",
     "start": "npm run start -w @overtone/server",
     "dev:web": "npm run dev -w @overtone/web",
     "test:e2e": "npm run build -w @overtone/web && npm run e2e -w @overtone/web",

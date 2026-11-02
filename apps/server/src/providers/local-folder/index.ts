@@ -9,9 +9,17 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { audioMimeType, isAudioFile } from '@overtone/shared';
 import { parseFile, selectCover } from 'music-metadata';
-import { fromMusicMetadata } from '../../metadata/tags.js';
-import { ProviderError } from '../errors.js';
-import type { Disposable, FileTags, LibraryChange, ProviderContext, ProviderPlugin, SourceFile, SourceProvider } from '../types.js';
+import {
+  fromMusicMetadata,
+  ProviderError,
+  type Disposable,
+  type FileTags,
+  type LibraryChange,
+  type ProviderContext,
+  type ProviderPlugin,
+  type SourceFile,
+  type SourceProvider,
+} from '@overtone/core';
 
 export type LocalFolderConfig = {
   path: string;

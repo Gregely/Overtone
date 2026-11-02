@@ -171,7 +171,7 @@ describe('local folder library', () => {
 
   it('scans, matches, browses, searches and streams with Range support', async () => {
     h = await createHarness({ mb: new FakeMusicBrainz([homework]) });
-    const src = h.services.sources.create({ providerId: 'local-folder', name: 'Music', config: { path: music, watch: false } });
+    const src = await h.services.sources.create({ providerId: 'local-folder', name: 'Music', config: { path: music, watch: false } });
     const report = await scanAndMatch(src.id);
     expect(report).toMatchObject({ added: 2, removed: 0, error: null });
 
@@ -212,7 +212,7 @@ describe('local folder library', () => {
 
   it('keeps unmatched files browsable from tags, and supports manual fixes', async () => {
     h = await createHarness({ mb: new FakeMusicBrainz([homework, reissue]) });
-    const src = h.services.sources.create({ providerId: 'local-folder', config: { path: music, watch: false } });
+    const src = await h.services.sources.create({ providerId: 'local-folder', config: { path: music, watch: false } });
     await h.services.scanner.scanSource(src.id); // tagged, not matched yet
     const before = (await h.app.inject({ url: '/api/library/albums', headers: h.auth })).json();
     expect(before.items).toMatchObject([{ title: 'Homework', mbid: null }]);
@@ -241,12 +241,12 @@ describe('local folder library', () => {
 
     // Manual matches survive rescans and match passes.
     await scanAndMatch(src.id);
-    expect(h.services.library.fileDto(daFunk.id)?.matchStatus).toBe('manual');
+    expect((await h.services.library.fileDto(daFunk.id))?.matchStatus).toBe('manual');
 
     // Rematch puts it back in the automatic queue.
     await h.app.inject({ method: 'POST', url: `/api/library/files/${daFunk.id}/rematch`, headers: h.auth });
     await h.services.matchWorker.drain();
-    expect(h.services.library.fileDto(daFunk.id)).toMatchObject({ matchStatus: 'matched' });
+    expect(await h.services.library.fileDto(daFunk.id)).toMatchObject({ matchStatus: 'matched' });
 
     // Album-level fix: move the whole album to the reissue.
     const albumId = track.album.id;
@@ -263,7 +263,7 @@ describe('local folder library', () => {
 
   it('shows unmatched files from their tags with a match status and review counts', async () => {
     h = await createHarness({ mb: new FakeMusicBrainz([]) }); // MusicBrainz knows nothing
-    const src = h.services.sources.create({ providerId: 'local-folder', config: { path: music, watch: false } });
+    const src = await h.services.sources.create({ providerId: 'local-folder', config: { path: music, watch: false } });
     await scanAndMatch(src.id);
     const albums = (await h.app.inject({ url: '/api/library/albums', headers: h.auth })).json().items;
     expect(albums).toMatchObject([{ title: 'Homework', mbid: null, attention: 2 }]);
@@ -278,7 +278,7 @@ describe('local folder library', () => {
 
   it('removes deleted files and keeps everything when a listing comes back empty', async () => {
     h = await createHarness();
-    const src = h.services.sources.create({ providerId: 'local-folder', config: { path: music, watch: false } });
+    const src = await h.services.sources.create({ providerId: 'local-folder', config: { path: music, watch: false } });
     await scanAndMatch(src.id);
     await rm(path.join(music, 'Daft Punk/Homework/01 - Revolution 909.mp3'));
     expect(await scanAndMatch(src.id)).toMatchObject({ removed: 1, unchanged: 1 });
@@ -287,16 +287,16 @@ describe('local folder library', () => {
     const r = await scanAndMatch(src.id);
     expect(r.removed).toBe(0);
     expect(r.error).toMatch(/no files/);
-    expect(h.services.library.stats().tracks).toBe(1);
+    expect((await h.services.library.stats()).tracks).toBe(1);
   });
 
   it('hides tracks from disabled sources', async () => {
     h = await createHarness();
-    const src = h.services.sources.create({ providerId: 'local-folder', config: { path: music, watch: false } });
+    const src = await h.services.sources.create({ providerId: 'local-folder', config: { path: music, watch: false } });
     await scanAndMatch(src.id);
-    expect(h.services.library.stats().tracks).toBe(2);
-    h.services.sources.update(src.id, { enabled: false });
-    expect(h.services.library.stats().tracks).toBe(0);
+    expect((await h.services.library.stats()).tracks).toBe(2);
+    await h.services.sources.update(src.id, { enabled: false });
+    expect((await h.services.library.stats()).tracks).toBe(0);
   });
 });
 
@@ -340,7 +340,7 @@ describe('remote streaming', () => {
     expect(redirected.headers.location).toBe('https://public.test/song.mp3');
 
     // Same safe link, proxy mode → proxied.
-    h.services.sources.update(id, { streamMode: 'proxy' });
+    await h.services.sources.update(id, { streamMode: 'proxy' });
     expect((await h.app.inject({ url })).statusCode).toBe(200);
   });
 

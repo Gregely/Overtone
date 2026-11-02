@@ -147,7 +147,7 @@ public class NativePlayerPlugin extends Plugin {
     }
     long startMs = Math.max(0, Math.round(call.getDouble("startAt", 0d) * 1000));
     boolean autoplay = Boolean.TRUE.equals(call.getBoolean("autoplay", true));
-    MediaItem item = mediaItem(url, call.getObject("metadata"));
+    MediaItem item = mediaItem(url, call.getObject("metadata"), call.getObject("headers"));
     withController(call, c -> {
       int idx = indexOf(c, url);
       int current = c.getCurrentMediaItemIndex();
@@ -168,7 +168,7 @@ public class NativePlayerPlugin extends Plugin {
   @PluginMethod
   public void preload(PluginCall call) {
     String url = call.getString("url");
-    MediaItem item = url == null ? null : mediaItem(url, call.getObject("metadata"));
+    MediaItem item = url == null ? null : mediaItem(url, call.getObject("metadata"), call.getObject("headers"));
     withController(call, c -> {
       int current = c.getCurrentMediaItemIndex();
       int count = c.getMediaItemCount();
@@ -309,8 +309,11 @@ public class NativePlayerPlugin extends Plugin {
     return -1;
   }
 
-  /** mediaId = URL (for matching); the URI travels in RequestMetadata (see PlaybackService). */
-  private static MediaItem mediaItem(String url, @Nullable JSObject meta) {
+  /**
+   * mediaId = URL (for matching); the URI and any request headers travel in
+   * RequestMetadata (see PlaybackService). Headers are never logged.
+   */
+  static MediaItem mediaItem(String url, @Nullable JSObject meta, @Nullable JSObject headers) {
     MediaMetadata.Builder md = new MediaMetadata.Builder();
     if (meta != null) {
       if (meta.has("title")) md.setTitle(meta.getString("title"));
@@ -319,10 +322,22 @@ public class NativePlayerPlugin extends Plugin {
       String art = meta.getString("artworkUrl");
       if (art != null) md.setArtworkUri(Uri.parse(art));
     }
+    MediaItem.RequestMetadata.Builder request = new MediaItem.RequestMetadata.Builder().setMediaUri(Uri.parse(url));
+    if (headers != null && headers.length() > 0) {
+      Bundle h = new Bundle();
+      for (java.util.Iterator<String> it = headers.keys(); it.hasNext(); ) {
+        String k = it.next();
+        String v = headers.optString(k, null);
+        if (v != null) h.putString(k, v);
+      }
+      Bundle extras = new Bundle();
+      extras.putBundle(PlaybackService.EXTRA_HEADERS, h);
+      request.setExtras(extras);
+    }
     return new MediaItem.Builder()
         .setMediaId(url)
         .setMediaMetadata(md.build())
-        .setRequestMetadata(new MediaItem.RequestMetadata.Builder().setMediaUri(Uri.parse(url)).build())
+        .setRequestMetadata(request.build())
         .build();
   }
 

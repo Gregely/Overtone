@@ -47,12 +47,43 @@ it's given and reports back.
 | `INTERNET` | Talk to your Overtone server |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK` | Keep playing in the background (required on Android 14+) |
 | `POST_NOTIFICATIONS` | Show the media notification (Android 13+; asked on first play) |
+| `FOREGROUND_SERVICE_DATA_SYNC` | Standalone mode: keep a long scan / MusicBrainz matching running, with a visible "Updating your library" notification |
 | `WAKE_LOCK` | Keep CPU and Wi-Fi awake while streaming with the screen off |
 | `ACCESS_NETWORK_STATE` | Added by the Media3 ExoPlayer library (network-type detection). Normal permission; no prompt. |
+
+"This device" folders use the Storage Access Framework folder picker:
+**no storage permission**; the app gets read access to the picked folders
+only. `USE_BIOMETRIC`/`USE_FINGERPRINT`, which `@capacitor-community/sqlite`'s
+biometric dependency would add, are removed from the manifest. Capacitor's
+bridge logging is off (`loggingBehavior: 'none'`), so plugin calls (URLs,
+headers, stored values) never reach logcat.
 
 There are no analytics, crash reporting, ads, Firebase/Google Play Services,
 or tracking SDKs. Backups are disabled (`allowBackup=false`, with no
 data-extraction backups): tokens are bound to this device's Keystore anyway.
+
+## Standalone mode (no server)
+
+On first launch choose **Use on this device (recommended)** or **Connect to
+my server (advanced)**; switch later in *Settings › Mode*. Each mode keeps its
+own data; switching deletes nothing. In standalone mode:
+
+- the library is an SQLite database in app storage (`@capacitor-community/sqlite`);
+  source keys/tokens are in Keystore-backed storage, not in the database;
+- provider and MusicBrainz requests use native HTTP (CapacitorHttp: no CORS),
+  with the same retries, rate limits and User-Agent as the server;
+- debrid/Subsonic/Internet Archive links are resolved on the phone and played
+  directly by Media3; an expired link is re-resolved once and resumes at the
+  same position. Debrid stays read-only (files already in your account only);
+- "This device": pick folders; tags are read with small ranged reads; files
+  play via `content://`. Revoked access shows an error on the source and keeps
+  the library until you pick the folder again;
+- scanning and matching run while the app is open and, for long jobs, in a
+  `dataSync` foreground service (Android 15 limits these to 6 h/day). Waits use
+  native timers. If the app is killed, work resumes from the database on the
+  next launch (it can't continue while the app is fully closed);
+- *Settings › Library*: storage used, last scan, match status, export/import
+  (keys only with a passphrase, encrypted), reset library.
 
 ## Connecting to your server
 
@@ -170,6 +201,12 @@ This builds the web app, regenerates the network security config, runs
 Native unit tests (JVM, Robolectric):
 `cd apps/web/android && ./gradlew testDebugUnitTest`.
 
+## Distribution
+
+Release APKs are published as files (e.g. GitHub Releases, or an
+F-Droid-style repository), and installed by sideloading. App-store listing is
+not planned: store policies may restrict apps that connect to debrid services.
+
 ## Install (sideload)
 
 1. Copy `overtone-<version>-release.apk` to the phone, or run
@@ -194,7 +231,20 @@ one with the other; uninstall first if you switch.
 
 ## Verification status
 
-Tested in this repository's CI-like environment:
+Tested in this repository's CI-like environment (0.6.0, standalone included):
+
+- `npm run android:build` builds `overtone-0.6.0-{debug.apk,release.apk,release.aab}`;
+  the release APK signature verifies with `apksigner`; merged-manifest
+  permissions match the table above.
+- JVM tests (12, Robolectric): additionally `content://` only from the app's
+  own controller, per-item request headers, SAF listing cursor, embedded
+  picture type sniffing, app-storage path confinement.
+- Standalone logic runs in the browser smoke test (sql.js, fake services) and
+  in unit/parity tests; the Capacitor SQLite driver, native HTTP adapter,
+  DeviceFolder/BackgroundWork/AppStorage plugins and Keystore secret store
+  are **compiled but not exercised on a device**.
+
+Earlier (0.5.0):
 
 - `npm run android:build` produces the debug APK, the signed release APK
   (v2/v3 signatures verified with `apksigner`) and the AAB. Android
@@ -256,3 +306,29 @@ Use a release build on Android 13 or newer, plus one older device if you can.
       reopen it: the queue is restored at the same position.
 - [ ] **Debrid / Subsonic sources** play through the server (proxy), as on
       the web.
+
+### Standalone checklist (not yet run on a device)
+
+- [ ] **First launch:** the mode chooser appears; "Use on this device" opens
+      "Add your first source"; no login screen anywhere.
+- [ ] **Debrid via device login:** add Real-Debrid (or AllDebrid/TorBox) with
+      "Log in with…", approve on the website, save; Test connection shows the
+      account and plan; files scan and play; the key never appears in the UI.
+- [ ] **Local folder via SAF:** add "This device", pick a music folder; no
+      storage permission prompt; tracks and embedded covers appear; seek works.
+- [ ] **Background playback** of a debrid track and a local file, screen off,
+      10+ minutes; notification controls work.
+- [ ] **Kill mid-scan:** start a large scan, see "Updating your library",
+      swipe the app away; reopen: the scan continues and finishes.
+- [ ] **Revoke folder permission** (Settings › Apps › Overtone, or delete the
+      folder): rescan shows "can no longer read …"; library is kept; picking
+      the folder again fixes it.
+- [ ] **Expired link:** leave a debrid track paused for hours; play resumes at
+      the same position.
+- [ ] **Switch modes** both ways: each side's library, sources and sign-in
+      are intact afterwards.
+- [ ] **Offline:** local files still play; remote sources fail with a clear
+      message; matching resumes when back online.
+- [ ] **Export/import:** export with and without a passphrase; import on a
+      fresh install; keys restored only with the passphrase.
+- [ ] **Reset library** asks for confirmation; sources and keys stay.

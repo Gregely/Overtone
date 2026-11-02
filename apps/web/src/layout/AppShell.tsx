@@ -71,8 +71,10 @@ function MatchIndicator() {
   }
   if (busy(data)) {
     return (
-      <Link to="/review" className="status-pill" role="status">
-        <span className="spinner" aria-hidden="true" /> Matching · {data.matching.pending.toLocaleString()} left
+      <Link to="/review" className="status-pill">
+        <span className="spinner" aria-hidden="true" />
+        {/* The live region goes inside: role="status" on the <a> itself would hide that it's a link. */}
+        <span role="status">Matching · {data.matching.pending.toLocaleString()} left</span>
       </Link>
     );
   }

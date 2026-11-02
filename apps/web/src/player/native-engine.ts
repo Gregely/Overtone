@@ -61,7 +61,7 @@ export class NativeEngine implements PlayerEngine {
     return () => this.#listeners.delete(fn);
   }
 
-  load(src: string, opts: { startAt: number; autoplay: boolean; metadata?: TrackMetadata }): void {
+  load(src: string, opts: { startAt: number; autoplay: boolean; metadata?: TrackMetadata; headers?: Record<string, string> }): void {
     if (src === this.#advancedTo) {
       // Already playing it (gapless hand-off). Only honour an explicit position / pause.
       this.#advancedTo = null;
@@ -72,7 +72,13 @@ export class NativeEngine implements PlayerEngine {
     this.#advancedTo = null;
     this.#position = opts.startAt;
     void this.#plugin
-      .loadTrack({ url: src, startAt: opts.startAt, autoplay: opts.autoplay, ...(opts.metadata ? { metadata: opts.metadata } : {}) })
+      .loadTrack({
+        url: src,
+        startAt: opts.startAt,
+        autoplay: opts.autoplay,
+        ...(opts.metadata ? { metadata: nativeMetadata(opts.metadata) } : {}),
+        ...(opts.headers ? { headers: opts.headers } : {}),
+      })
       .catch((e) => this.#fail(e));
   }
 
@@ -94,8 +100,10 @@ export class NativeEngine implements PlayerEngine {
     void this.#plugin.seek({ position: seconds }).catch(() => undefined);
   }
 
-  preload(src: string | null, metadata?: TrackMetadata): void {
-    void this.#plugin.preload({ url: src, ...(metadata ? { metadata } : {}) }).catch(() => undefined);
+  preload(src: string | null, metadata?: TrackMetadata, headers?: Record<string, string>): void {
+    void this.#plugin
+      .preload({ url: src, ...(metadata ? { metadata: nativeMetadata(metadata) } : {}), ...(headers ? { headers } : {}) })
+      .catch(() => undefined);
   }
 
   setVolume(volume: number): void {
@@ -121,4 +129,15 @@ export class NativeEngine implements PlayerEngine {
     this.#listeners.clear();
     for (const h of this.#handles) void h.then((x) => x.remove()).catch(() => undefined);
   }
+}
+
+/**
+ * Artwork for the media notification is loaded by Media3, natively. A cover
+ * cached in app storage is shown to the WebView as
+ * http://localhost/_capacitor_file_/<path>, which only the WebView can open:
+ * hand Media3 the file:// path instead.
+ */
+export function nativeMetadata(m: TrackMetadata): TrackMetadata {
+  const art = m.artworkUrl?.match(/^https?:\/\/localhost\/_capacitor_file_(\/.*)$/);
+  return art ? { ...m, artworkUrl: `file://${art[1]}` } : m;
 }

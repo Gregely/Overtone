@@ -33,6 +33,14 @@ export interface TextField extends BaseField {
   placeholder?: string;
   /** Optional regex (source string) the value must match. */
   pattern?: string;
+  /**
+   * Render a platform picker instead of a text box. 'device-folder': the
+   * Android folder picker (Storage Access Framework); the value is the
+   * folder's content:// tree URI and `labelKey` holds its display name.
+   */
+  widget?: 'device-folder';
+  /** With `widget`: a sibling field that stores the picked item's display name. */
+  labelKey?: string;
 }
 
 export interface SecretField extends BaseField {

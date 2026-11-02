@@ -1,15 +1,18 @@
 import { Link } from 'react-router';
 import { busy, useHome, useScanStatus } from '../api/hooks';
 import { useIsAdmin } from '../app/context';
+import { useMode } from '../app/mode';
 import { Page } from '../layout/Page';
 import { plural } from '../ui/format';
 import { AlbumGrid } from '../ui/media';
 import { EmptyState, QueryView } from '../ui/states';
+import { FirstSourceGuide } from './Welcome';
 
 export function HomeView() {
   const home = useHome();
   const admin = useIsAdmin();
   const scan = useScanStatus();
+  const { mode } = useMode();
   return (
     <Page title="Home">
       <QueryView query={home} label="Loading your library">
@@ -18,6 +21,11 @@ export function HomeView() {
             <EmptyState title={scan.data && busy(scan.data) ? 'Building your library…' : 'Your library is empty'}>
               {scan.data && busy(scan.data) ? (
                 <p>Files appear here as they're scanned.</p>
+              ) : mode === 'standalone' && h.stats.tracks === 0 ? (
+                <>
+                  <p>Add your first source: somewhere your music already is.</p>
+                  <FirstSourceGuide compact />
+                </>
               ) : admin ? (
                 <>
                   <p>Add a music source to get started.</p>

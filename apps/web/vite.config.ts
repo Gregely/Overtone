@@ -10,6 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@overtone/shared': fileURLToPath(new URL('../../packages/shared/src/index.ts', import.meta.url)),
+      '@overtone/core': fileURLToPath(new URL('../../packages/core/src/index.ts', import.meta.url)),
     },
   },
   plugins: [

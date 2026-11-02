@@ -27,6 +27,9 @@ const paths = {
   edit: 'M4 20h4L19 9l-4-4L4 16zM14 6l4 4',
   wand: 'M15 4V2M15 10V8M12 5h-2M20 5h-2M17.8 7.8l1.4 1.4M17.8 2.2l1.4-1.4M3 21l12-12',
   bars: 'M6 14v-4M10 18V6M14 20V4M18 16V8',
+  download: 'M12 4v11M7 10l5 5 5-5M5 20h14',
+  folder: 'M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z',
+  phone: 'M8 2h8a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM11 18h2',
 } as const;
 
 export type IconName = keyof typeof paths;

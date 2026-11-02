@@ -891,3 +891,29 @@ dl.meta dd {
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+/* Large tappable option (mode chooser, "Add your first source"). */
+.choice {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  padding: 14px 16px;
+  min-height: var(--tap);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.choice:hover {
+  background: var(--surface-2);
+}
+.choice > strong {
+  font-size: 1.05rem;
+}
+.label {
+  font-weight: 600;
+}

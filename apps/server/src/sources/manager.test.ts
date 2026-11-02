@@ -72,7 +72,7 @@ describe('SourceManager via /api/sources', () => {
 
     const patched = await h.app.inject({ method: 'PATCH', url: `/api/sources/${id}`, headers: h.auth, payload: { config: { url: 'https://b.test' } } });
     expect(patched.json().config).toEqual({ values: { url: 'https://b.test' }, secretsSet: ['apiKey'] });
-    h.services.sources.instance(id);
+    await h.services.sources.instance(id);
     expect(seenConfigs.at(-1)).toMatchObject({ url: 'https://b.test', apiKey: SECRET });
 
     const cleared = await h.app.inject({ method: 'PATCH', url: `/api/sources/${id}`, headers: h.auth, payload: { config: { apiKey: null } } });
@@ -113,11 +113,11 @@ describe('SourceManager via /api/sources', () => {
     const { id } = (
       await h.app.inject({ method: 'POST', url: '/api/sources', headers: h.auth, payload: { providerId: 'keyed', config: { url: 'https://a.test', apiKey: SECRET } } })
     ).json();
-    await h.services.sources.instance(id).resolveStream('f', { signal: new AbortController().signal });
-    const dto = h.services.sources.toDto(h.services.sources.require(id));
+    await (await h.services.sources.instance(id)).resolveStream('f', { signal: new AbortController().signal });
+    const dto = await h.services.sources.toDto(await h.services.sources.require(id));
     expect(dto.config.secretsSet).toEqual(['apiKey']); // hidden secret stored but not advertised
-    h.services.sources.update(id, {}); // drop cached instance
-    h.services.sources.instance(id);
+    await h.services.sources.update(id, {}); // drop cached instance
+    await h.services.sources.instance(id);
     expect(seenConfigs.at(-1)).toMatchObject({ refreshToken: 'rotated', apiKey: SECRET });
     expect(h.logs()).toContain('using key [redacted]');
     expect(h.logs()).not.toContain(SECRET);

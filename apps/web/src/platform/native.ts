@@ -14,8 +14,8 @@ export interface NativeStateEvent {
 }
 
 export interface NativePlayerPlugin {
-  loadTrack(options: { url: string; startAt: number; autoplay: boolean; metadata?: TrackMetadata }): Promise<void>;
-  preload(options: { url: string | null; metadata?: TrackMetadata }): Promise<void>;
+  loadTrack(options: { url: string; startAt: number; autoplay: boolean; metadata?: TrackMetadata; headers?: Record<string, string> }): Promise<void>;
+  preload(options: { url: string | null; metadata?: TrackMetadata; headers?: Record<string, string> }): Promise<void>;
   play(): Promise<void>;
   pause(): Promise<void>;
   seek(options: { position: number }): Promise<void>;

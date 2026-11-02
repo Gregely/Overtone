@@ -17,9 +17,12 @@ export interface StreamLink {
   /** Epoch ms. */
   expiresAt: number;
   source: SourceBadgeDto | null;
+  /** Request headers the link needs (standalone; native player only). */
+  headers?: Record<string, string>;
 }
 
-export type LinkFetcher = (trackIds: number[]) => Promise<{ links: Map<number, StreamLink>; unavailable: number[] }>;
+/** `refresh`: tracks whose last link failed, to be resolved again rather than reused. */
+export type LinkFetcher = (trackIds: number[], opts?: { refresh?: number[] }) => Promise<{ links: Map<number, StreamLink>; unavailable: number[] }>;
 
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
 
@@ -340,7 +343,7 @@ export class PlayerController {
     }
     if (seq !== this.#seq) return;
     this.#set({ source: link.source });
-    this.#engine.load(link.url, { startAt, autoplay, metadata: this.#metadata(item.track) });
+    this.#engine.load(link.url, { startAt, autoplay, metadata: this.#metadata(item.track), ...(link.headers ? { headers: link.headers } : {}) });
     if (!autoplay) this.#set({ status: 'paused' });
   }
 
@@ -353,7 +356,8 @@ export class PlayerController {
       const c = this.#links.get(item.track.id);
       if (item.track.id !== trackId && (!c || c.expiresAt - this.#now() <= this.#margin)) ids.push(item.track.id);
     }
-    const { links, unavailable } = await this.#fetchLinks([...new Set(ids)]);
+    const unique = [...new Set(ids)];
+    const { links, unavailable } = await (force ? this.#fetchLinks(unique, { refresh: [trackId] }) : this.#fetchLinks(unique));
     for (const [id, l] of links) this.#links.set(id, l);
     for (const id of unavailable) this.#links.delete(id);
     const link = links.get(trackId);
@@ -444,7 +448,7 @@ export class PlayerController {
     const seq = this.#seq;
     this.#link(next.track.id, false).then(
       (link) => {
-        if (seq === this.#seq) this.#engine.preload(link.url, this.#metadata(next.track));
+        if (seq === this.#seq) this.#engine.preload(link.url, this.#metadata(next.track), link.headers);
       },
       () => {
         /* it'll be retried (and reported) when it becomes current */

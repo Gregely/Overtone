@@ -24,14 +24,15 @@ export type EngineEvent =
 
 export interface PlayerEngine {
   /** Start loading `src`; seek to `startAt` seconds once possible; play if `autoplay`. */
-  load(src: string, opts: { startAt: number; autoplay: boolean; metadata?: TrackMetadata }): void;
+  /** `headers`: extra request headers for `src` (honoured by the native engine; the web engine can't send any). */
+  load(src: string, opts: { startAt: number; autoplay: boolean; metadata?: TrackMetadata; headers?: Record<string, string> }): void;
   /** Stop and release the current source. */
   unload(): void;
   play(): Promise<void>;
   pause(): void;
   seek(seconds: number): void;
   /** Hint: start buffering the likely next source for a near-gapless switch. */
-  preload(src: string | null, metadata?: TrackMetadata): void;
+  preload(src: string | null, metadata?: TrackMetadata, headers?: Record<string, string>): void;
   setVolume(volume: number): void;
   position(): number;
   /**

@@ -11,10 +11,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildApp } from '../app.js';
 import { DEFAULT_CORS_ORIGINS } from '../config.js';
-import { createDebridPlugin } from '../providers/debrid/index.js';
-import { createRealDebridAdapter } from '../providers/debrid/adapters/real-debrid/index.js';
+import { createDebridPlugin, createRealDebridAdapter, ProviderRegistry } from '@overtone/core';
 import { createBuiltinPlugins } from '../providers/index.js';
-import { ProviderRegistry } from '../providers/registry.js';
 import { makeMp3 } from './audio-fixtures.js';
 import { credit, FakeMusicBrainz, release } from './fake-musicbrainz.js';
 import { startFakeServices } from './fake-services.js';
@@ -93,7 +91,7 @@ const { app, services } = await buildApp({
   registry,
 });
 await app.listen({ host: '127.0.0.1', port });
-services.startBackground();
+await services.startBackground();
 console.log(`e2e server on http://127.0.0.1:${port} (web: ${webDir}, data: ${root}, fake services: ${fakes.base})`);
 
 const stop = async () => {

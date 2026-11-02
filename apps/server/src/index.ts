@@ -18,7 +18,7 @@ async function main(): Promise<void> {
 
   const { app, services } = await buildApp({ config });
   await app.listen({ host: config.host, port: config.port });
-  services.startBackground();
+  await services.startBackground();
 
   let closing = false;
   const shutdown = async (signal: string) => {

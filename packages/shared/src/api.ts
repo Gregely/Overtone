@@ -203,12 +203,23 @@ export interface StreamUrlsRequestDto {
   trackIds: number[];
   /** Prefer this source when a track is available from several. */
   preferSourceId?: string;
+  /**
+   * Tracks whose previous link failed: resolve them again instead of reusing
+   * a cached link. (Standalone mode; the server re-resolves inside its proxy.)
+   */
+  refresh?: number[];
 }
 
 export interface StreamUrlDto {
   trackId: number;
-  /** Relative URL with an embedded short-lived token; set it directly as <audio src>. */
+  /**
+   * Server mode: relative URL with an embedded short-lived token; set it
+   * directly as <audio src>. Standalone mode: the provider's own link (or a
+   * content:// URI for files on this device), played directly.
+   */
   url: string;
+  /** Request headers the link needs (standalone mode, native player only). */
+  headers?: Record<string, string>;
   expiresAt: string;
   source: SourceBadgeDto;
   mimeType: string | null;
@@ -297,4 +308,51 @@ export interface FileMatchRequestDto {
   recordingMbid: string;
   /** Pin a specific release; otherwise the best-fitting release of the recording is chosen. */
   releaseMbid?: string;
+}
+
+// ── Standalone mode (on-device library) ─────────────────────────────────────
+
+/** Settings › Library in standalone mode. */
+export interface LibraryInfoDto {
+  /** Bytes used by the library database, when the platform can tell. */
+  databaseBytes: number | null;
+  /** Bytes used by cached album artwork. */
+  artworkBytes: number | null;
+  lastScanAt: string | null;
+  sourceCount: number;
+  stats: HomeDto['stats'];
+  matching: ScanStatusDto['matching'];
+  scanning: boolean;
+}
+
+/** A library export file (JSON). Secrets only appear encrypted, and only when the user chose a passphrase. */
+export interface LibraryExportDto {
+  format: 'overtone-library';
+  version: 1;
+  schemaVersion: number;
+  exportedAt: string;
+  sources: Array<{
+    id: string;
+    providerId: string;
+    name: string;
+    enabled: boolean;
+    priority: number;
+    config: Record<string, unknown>;
+  }>;
+  /** Table rows keyed by table name (source_files, tracks, releases, artists). */
+  tables: Record<string, Array<Record<string, unknown>>>;
+  /** AES-GCM encrypted secrets (PBKDF2-SHA256 from the passphrase). */
+  secrets?: { kdf: 'PBKDF2-SHA256'; iterations: number; salt: string; iv: string; data: string };
+}
+
+export interface LibraryImportRequestDto {
+  file: LibraryExportDto;
+  /** Needed to restore secrets from an encrypted export. */
+  passphrase?: string;
+}
+
+export interface LibraryImportResultDto {
+  sources: number;
+  files: number;
+  secretsRestored: boolean;
 }

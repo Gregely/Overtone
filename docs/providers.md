@@ -1,16 +1,26 @@
 # Writing a source provider
 
+Providers live in **`packages/core`** (`@overtone/core`) and run both on the
+server and inside the Android app (standalone mode). So they **must not use
+Node-only APIs**: no `node:*` imports, `Buffer`, `process`, or the
+filesystem. Use `Uint8Array`, WebCrypto / `crypto.ts` helpers (`md5Hex`,
+`sha256Hex`, `randomId`), and do all network I/O through `ctx.fetch`. Core's
+tsconfig has no Node types, so a Node API fails to compile. Platform file
+access belongs outside core (server: `apps/server/src/providers/local-folder`;
+Android: `apps/web/src/standalone/device-folder.ts`), passed in via
+`createBuiltinPlugins({ local: [...] })`.
+
 The authoritative reference is the doc-commented interface in
-[`apps/server/src/providers/types.ts`](../apps/server/src/providers/types.ts).
+[`packages/core/src/providers/types.ts`](../packages/core/src/providers/types.ts).
 The built-in providers are worked examples: start with
-[`subsonic/`](../apps/server/src/providers/subsonic/index.ts) (a server with
+[`subsonic/`](../packages/core/src/providers/subsonic/index.ts) (a server with
 its own auth) or
-[`debrid/adapters/torbox/`](../apps/server/src/providers/debrid/adapters/torbox/index.ts)
+[`debrid/adapters/torbox/`](../packages/core/src/providers/debrid/adapters/torbox/index.ts)
 (a debrid adapter with a device login).
 
-A provider is one folder under `apps/server/src/providers/<id>/` that exports
+A provider is one folder under `packages/core/src/providers/<id>/` that exports
 a `ProviderPlugin`. Register it in `createBuiltinPlugins()` in
-`apps/server/src/providers/index.ts`.
+`packages/core/src/providers/index.ts`.
 
 ```ts
 /**
@@ -120,11 +130,11 @@ ones with `ctx.updateSecrets({...})`; see the Real-Debrid adapter.
 
 Each adapter has a test file next to it, using:
 
-- `mockHttp()` from `apps/server/src/testing/mock-http.ts`: a route-based
+- `mockHttp()` from `packages/core/src/testing/mock-http.ts`: a route-based
   fetch double that records requests. Build fixtures from the shapes in the
   official docs, with fake ids and keys only.
 - `createTestContext({ fetch, retries: true })` from
-  `apps/server/src/testing/provider-context.ts`: runs through the real
+  `packages/core/src/testing/provider-context.ts`: runs through the real
   retry/backoff layer with a fake clock, so `ctx.delays` shows the backoff.
 
 Cover success, bad key, expired key/token, 429 (one retry then success, and

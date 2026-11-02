@@ -39,6 +39,11 @@ export async function startFakeServices(port: number): Promise<FakeServices> {
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
     const u = new URL(req.url ?? '/', base);
     const p = u.pathname;
+    // Standalone mode in a plain browser calls these services directly (no server), so allow CORS.
+    res.setHeader('access-control-allow-origin', '*');
+    res.setHeader('access-control-allow-headers', '*');
+    res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+    if (req.method === 'OPTIONS') return res.writeHead(204).end();
     let body = '';
     for await (const chunk of req) body += chunk;
 
@@ -90,6 +95,10 @@ export async function startFakeServices(port: number): Promise<FakeServices> {
       }
     }
     if (p === '/rd/cdn/debrid-song.mp3') return sendAudio(res, mp3('rd', 'Debrid Song'));
+
+    // ── MusicBrainz WS/2 (standalone e2e): knows nothing, so files stay tag-matched ──
+    if (p.startsWith('/ws/2/recording')) return send(res, 200, { recordings: [], count: 0 });
+    if (p.startsWith('/ws/2/release')) return send(res, 200, { releases: [], count: 0 });
 
     send(res, 404, { error: `fake: no route ${req.method} ${p}` });
   };

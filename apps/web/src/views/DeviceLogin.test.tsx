@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import type { ProviderManifestDto } from '@overtone/shared';
-import { ApiClient } from '../api/client';
+import { HttpTransport } from '../api/client';
 import { ApiProvider } from '../app/context';
 import { memoryStore } from '../platform/storage';
 import { SourceEditView } from './Sources';
@@ -51,7 +51,7 @@ async function setup() {
   };
   await storage.set('overtone.serverUrl', 'http://srv');
   await storage.set('overtone.session', JSON.stringify({ serverUrl: 'http://srv', tokens }));
-  const api = new ApiClient({ storage, serverUrl: null, fetch: fetch as unknown as typeof globalThis.fetch, withLock: (_n, fn) => fn() });
+  const api = new HttpTransport({ storage, serverUrl: null, fetch: fetch as unknown as typeof globalThis.fetch, withLock: (_n, fn) => fn() });
   await api.restore(null);
   render(
     <ApiProvider client={api}>

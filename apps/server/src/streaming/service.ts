@@ -4,12 +4,7 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { audioMimeType } from '@overtone/shared';
-import type { BaseLogger } from '../http/redact.js';
-import { ProviderError } from '../providers/errors.js';
-import type { ResolveCache } from '../providers/resolve-cache.js';
-import type { ResolvedStream } from '../providers/types.js';
-import type { SourceManager } from '../sources/manager.js';
-import type { SourceFileRow } from '../library/repo.js';
+import { ProviderError, type BaseLogger, type ResolveCache, type ResolvedStream, type SourceFileRow, type SourceManager } from '@overtone/core';
 import { parseRange } from './range.js';
 
 /** Content types that are never audio: an error document from the source. */
@@ -37,8 +32,8 @@ export class StreamService {
   constructor(private readonly d: StreamServiceDeps) {}
 
   async serve(file: SourceFileRow, req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
-    const source = this.d.sources.require(file.source_id);
-    const provider = this.d.sources.instance(source.id);
+    const source = await this.d.sources.require(file.source_id);
+    const provider = await this.d.sources.instance(source.id);
     const signal = abortOnClose(reply);
     const resolve = (forceRefresh: boolean) =>
       this.d.resolver.resolve(source.id, provider, file.file_id, { signal, ...(forceRefresh ? { forceRefresh } : {}) });

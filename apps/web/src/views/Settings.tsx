@@ -2,12 +2,14 @@ import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router';
 import { ApiError } from '../api/client';
 import { useApi, useApiState, useIsAdmin } from '../app/context';
+import { useMode } from '../app/mode';
 import { Page } from '../layout/Page';
 import { useSession } from '../session/session';
 import { getTheme, setTheme, type ThemePref } from '../theme';
 import { Icon } from '../ui/Icon';
 import { errorMessage } from '../ui/states';
 import { ServerField } from './Auth';
+import { LibrarySettings, ModeSettings } from './LibrarySettings';
 
 export function SettingsView() {
   const session = useSession();
@@ -16,6 +18,8 @@ export function SettingsView() {
   const admin = useIsAdmin();
   const version = session.state.phase === 'ready' ? session.state.version : '';
   const [theme, setThemeState] = useState<ThemePref>(getTheme());
+  const { mode } = useMode();
+  const standalone = mode === 'standalone';
 
   return (
     <Page title="Settings">
@@ -34,25 +38,36 @@ export function SettingsView() {
         </section>
       )}
 
-      <section className="card stack-sm" aria-labelledby="set-server">
-        <h2 id="set-server">Server</h2>
-        <ServerField serverUrl={serverUrl} />
-        <p className="small muted">Overtone server {version}</p>
-      </section>
+      <ModeSettings />
 
-      <section className="card stack-sm" aria-labelledby="set-account">
-        <h2 id="set-account">Account</h2>
-        <p>
-          Signed in as <strong>{user?.username}</strong>
-          {user?.isAdmin ? ' (admin)' : ''}
-        </p>
-        <ChangePassword />
-        <div>
-          <button type="button" className="btn" onClick={() => void session.logout()}>
-            Sign out
-          </button>
-        </div>
-      </section>
+      {standalone ? (
+        <>
+          <LibrarySettings />
+          <p className="small muted">Overtone {version}, running on this device.</p>
+        </>
+      ) : (
+        <>
+          <section className="card stack-sm" aria-labelledby="set-server">
+            <h2 id="set-server">Server</h2>
+            <ServerField serverUrl={serverUrl} />
+            <p className="small muted">Overtone server {version}</p>
+          </section>
+
+          <section className="card stack-sm" aria-labelledby="set-account">
+            <h2 id="set-account">Account</h2>
+            <p>
+              Signed in as <strong>{user?.username}</strong>
+              {user?.isAdmin ? ' (admin)' : ''}
+            </p>
+            <ChangePassword />
+            <div>
+              <button type="button" className="btn" onClick={() => void session.logout()}>
+                Sign out
+              </button>
+            </div>
+          </section>
+        </>
+      )}
 
       <section className="card stack-sm" aria-labelledby="set-look">
         <h2 id="set-look">Appearance</h2>
