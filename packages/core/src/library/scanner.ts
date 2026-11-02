@@ -226,10 +226,12 @@ export class LibraryScanner {
       error: null,
     };
     const log = this.#d.logger;
+    let provider: SourceProvider | undefined;
+    let seen = 0;
     try {
-      const provider = await this.#d.sources.instance(sourceId);
+      provider = await this.#d.sources.instance(sourceId);
       const before = await this.#d.library.countFiles(sourceId);
-      let seen = 0;
+      log.info({ sourceId, filesInLibrary: before }, 'scan started');
       for await (const file of provider.listLibrary({ signal: abort.signal })) {
         const r = await this.#d.library.upsertSourceFile(sourceId, file, scanId);
         report[r.status]++;
@@ -247,7 +249,18 @@ export class LibraryScanner {
       await this.#tagPending(sourceId, provider, abort.signal);
     } catch (err) {
       report.error = (err as Error).message;
-      log.warn({ sourceId, error: report.error }, 'scan failed');
+      log.warn({ sourceId, error: report.error, filesListed: seen }, 'scan failed');
+      // The listing broke partway (one API list failed, a timeout, a rate limit).
+      // Files stored before the failure are real: tag them so they show up in the
+      // library instead of sitting invisible until a fully clean scan. Removals
+      // stay skipped, since an incomplete listing says nothing about what's gone.
+      if (provider && !abort.signal.aborted && !this.#stopped) {
+        try {
+          await this.#tagPending(sourceId, provider, abort.signal);
+        } catch (tagErr) {
+          log.warn({ sourceId, error: (tagErr as Error).message }, 'tagging after a failed listing also failed');
+        }
+      }
     } finally {
       this.#running = null;
     }
@@ -255,31 +268,39 @@ export class LibraryScanner {
     await this.#d.sources.setScanResult(sourceId, this.#now(), report.error);
     this.#reports.unshift(report);
     this.#reports.length = Math.min(this.#reports.length, 20);
-    log.info({ ...report }, 'scan finished');
+    log.info({ ...report, filesListed: seen }, 'scan finished');
     this.#d.onTagged?.();
     return report;
   }
 
   async #tagPending(sourceId: string, provider: SourceProvider, signal: AbortSignal): Promise<void> {
-    for (;;) {
-      const batch = await this.#d.library.filesNeedingTags(sourceId, 100);
-      if (!batch.length) return;
-      await mapLimit(batch, 4, async (file) => {
-        signal.throwIfAborted();
-        const tags = await this.#readTags(sourceId, provider, file, signal);
-        await this.#d.library.saveTags(file, tags);
-      });
-      this.#d.onTagged?.();
+    const stats = { tagged: 0, tagReadFailures: 0 };
+    try {
+      for (;;) {
+        const batch = await this.#d.library.filesNeedingTags(sourceId, 100);
+        if (!batch.length) return;
+        await mapLimit(batch, 4, async (file) => {
+          signal.throwIfAborted();
+          const tags = await this.#readTags(sourceId, provider, file, signal, stats);
+          await this.#d.library.saveTags(file, tags);
+          stats.tagged++;
+        });
+        this.#d.onTagged?.();
+      }
+    } finally {
+      // tagReadFailures fell back to folder/file-name tags; they're still in the library.
+      if (stats.tagged || stats.tagReadFailures) this.#d.logger.info({ sourceId, ...stats }, 'tagging finished');
     }
   }
 
-  async #readTags(sourceId: string, provider: SourceProvider, file: SourceFileRow, signal: AbortSignal): Promise<FileTags> {
+  async #readTags(sourceId: string, provider: SourceProvider, file: SourceFileRow, signal: AbortSignal, stats?: { tagReadFailures: number }): Promise<FileTags> {
     const listed = file.tags_json ? (JSON.parse(file.tags_json) as FileTags) : null;
     let embedded: FileTags | null = null;
     try {
       if (provider.readTags) embedded = await provider.readTags(file.file_id, { signal });
       else if (!listed?.title) embedded = await this.#probeRemote(sourceId, provider, file, signal);
     } catch (err) {
+      if (stats) stats.tagReadFailures++;
       this.#d.logger.debug({ sourceId, fileId: file.id, error: (err as Error).message }, 'tag read failed');
     }
     const tags = mergeTags(mergeTags(listed, embedded), parseFilename(file.path));

@@ -9,7 +9,7 @@
  * and are often tied to the requesting IP, so the server always proxies them.
  */
 
-import { audioMimeType, isAudioFile, type ConfigField, type ConfigValues } from '@overtone/shared';
+import { audioMimeType, fileExtension, isAudioFile, type ConfigField, type ConfigValues } from '@overtone/shared';
 import { probeRemoteTags } from '../../metadata/probe.js';
 import { ProviderError } from '../errors.js';
 import type {
@@ -77,6 +77,14 @@ export function createDebridPlugin(def: DebridAdapterDefinition): ProviderPlugin
   };
 }
 
+function topCounts(counts: Record<string, number>, n: number): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, n),
+  );
+}
+
 function extractCredentials(config: ConfigValues, keys: readonly string[]): DebridCredentials {
   const out: Record<string, string> = {};
   for (const k of keys) {
@@ -112,18 +120,42 @@ export class DebridSourceProvider implements SourceProvider {
   }
 
   async *listLibrary(opts: CallOptions): AsyncIterable<SourceFile> {
-    for await (const f of this.adapter.listFiles(opts)) {
-      opts.signal.throwIfAborted();
-      if (!isAudioFile(f.name)) continue;
-      const mimeType = audioMimeType(f.name);
-      yield {
-        id: f.id,
-        name: f.name,
-        path: f.path,
-        size: f.size,
-        ...(mimeType ? { mimeType } : {}),
-        ...(f.modifiedAt ? { modifiedAt: f.modifiedAt } : {}),
-      };
+    // Diagnostics: an account full of non-audio files (video, archives) lists
+    // fine but imports nothing; the counts make that distinguishable from a
+    // provider that returned nothing at all.
+    const stats = { listed: 0, audio: 0, skippedNotAudio: 0 };
+    const skippedByExtension: Record<string, number> = {};
+    let failed: string | undefined;
+    this.#ctx.logger.info('debrid listing started', { provider: this.#def.id });
+    try {
+      for await (const f of this.adapter.listFiles(opts)) {
+        opts.signal.throwIfAborted();
+        stats.listed++;
+        if (!isAudioFile(f.name)) {
+          stats.skippedNotAudio++;
+          const ext = fileExtension(f.name) || '(none)';
+          skippedByExtension[ext] = (skippedByExtension[ext] ?? 0) + 1;
+          continue;
+        }
+        stats.audio++;
+        const mimeType = audioMimeType(f.name);
+        yield {
+          id: f.id,
+          name: f.name,
+          path: f.path,
+          size: f.size,
+          ...(mimeType ? { mimeType } : {}),
+          ...(f.modifiedAt ? { modifiedAt: f.modifiedAt } : {}),
+        };
+      }
+    } catch (err) {
+      failed = (err as Error).message;
+      throw err;
+    } finally {
+      const data = { provider: this.#def.id, ...stats, skippedByExtension: topCounts(skippedByExtension, 10), ...(failed ? { error: failed } : {}) };
+      if (failed) this.#ctx.logger.warn('debrid listing incomplete', data);
+      else if (stats.listed > 0 && stats.audio === 0) this.#ctx.logger.warn('debrid listing found no audio files', data);
+      else this.#ctx.logger.info('debrid listing finished', data);
     }
   }
 

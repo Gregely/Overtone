@@ -21,7 +21,7 @@
  *    DEVICE_CODE_NOT_USED (keep waiting), ITEM_NOT_FOUND (expired), DEVICE_CODE_USED
  */
 import { ProviderError } from '../../../errors.js';
-import { readJson, send } from '../../../http.js';
+import { readJson, send, type RequestInitWithTimeout } from '../../../http.js';
 import type { CallOptions, DeviceFlowContext, DeviceFlowHandler, ProviderContext, ResolveOptions } from '../../../types.js';
 import type { DebridAccountInfo, DebridAdapter, DebridAdapterDefinition, DebridCredentials, DebridFile, DebridResolvedLink } from '../../types.js';
 
@@ -51,6 +51,8 @@ const KINDS = [
   { kind: 'webdl', prefix: 'w', idParam: 'web_id' },
 ] as const;
 const PAGE = 1000;
+/** mylist with bypass_cache can be slow on large accounts; the 20 s default is too tight. */
+const LIST_TIMEOUT_MS = 90_000;
 const LINK_TTL_MS = 3 * 3600_000; // "This endpoint opens the link for 3 hours"
 const PLANS: Record<number, string> = { 0: 'Free', 1: 'Essential', 2: 'Pro', 3: 'Standard' };
 
@@ -69,7 +71,7 @@ export function createTorBoxAdapter(opts: TorBoxOptions = {}): DebridAdapterDefi
 
 export const torBoxAdapter = createTorBoxAdapter();
 
-async function call<T>(ctx: Pick<ProviderContext, 'fetch'>, url: string, what: string, init: RequestInit & { idempotent?: boolean }): Promise<T> {
+async function call<T>(ctx: Pick<ProviderContext, 'fetch'>, url: string, what: string, init: RequestInitWithTimeout): Promise<T> {
   const res = await send(ctx, url, init, what);
   if (res.status === 429) {
     await res.body?.cancel();
@@ -102,8 +104,12 @@ class TorBoxAdapter implements DebridAdapter {
     this.#o = o;
   }
 
-  #get<T>(path: string, what: string, signal: AbortSignal): Promise<T> {
-    return call<T>(this.#ctx, `${this.#o.apiBase}${path}`, what, { headers: { authorization: `Bearer ${this.#key}` }, signal });
+  #get<T>(path: string, what: string, signal: AbortSignal, timeoutMs?: number): Promise<T> {
+    return call<T>(this.#ctx, `${this.#o.apiBase}${path}`, what, {
+      headers: { authorization: `Bearer ${this.#key}` },
+      signal,
+      ...(timeoutMs ? { timeoutMs } : {}),
+    });
   }
 
   async testConnection({ signal }: CallOptions): Promise<DebridAccountInfo> {
@@ -118,27 +124,68 @@ class TorBoxAdapter implements DebridAdapter {
     };
   }
 
+  /**
+   * Lists torrents, then usenet, then web downloads. A failure in one list
+   * (e.g. usenet on a plan without it, a TorBox 5xx, a timeout) doesn't stop
+   * the others: everything that could be listed is yielded first, then the
+   * first error is re-thrown so the scanner knows the listing was incomplete
+   * (and keeps existing library entries instead of removing them).
+   * Auth errors stop immediately: no other list would succeed either.
+   */
   async *listFiles({ signal }: CallOptions): AsyncIterable<DebridFile> {
+    const log = this.#ctx.logger;
+    let firstError: unknown;
     for (const k of KINDS) {
-      for (let offset = 0; ; offset += PAGE) {
-        const items = (await this.#get<TbItem[] | null>(`/${k.kind}/mylist?bypass_cache=true&offset=${offset}&limit=${PAGE}`, `List ${k.kind}`, signal)) ?? [];
-        for (const item of items) {
-          if (!item.download_finished || item.download_present === false) continue;
-          for (const f of item.files ?? []) {
-            const name = f.short_name || f.name.split('/').pop() || f.name;
-            yield {
-              id: `${k.prefix}:${item.id}:${f.id}`,
-              name,
-              // `name` is the path inside the download, usually prefixed with the item folder.
-              path: f.name.includes('/') ? f.name : `${item.name}/${name}`,
-              size: f.size,
-              ...(item.updated_at ? { modifiedAt: new Date(item.updated_at) } : {}),
-            };
+      const stats = { items: 0, available: 0, notReady: 0, files: 0, badFiles: 0, pages: 0 };
+      const seen = new Set<number>();
+      try {
+        for (let offset = 0; ; offset += PAGE) {
+          const data = await this.#get<unknown>(`/${k.kind}/mylist?bypass_cache=true&offset=${offset}&limit=${PAGE}`, `List ${k.kind}`, signal, LIST_TIMEOUT_MS);
+          if (data !== null && data !== undefined && !Array.isArray(data)) {
+            throw new ProviderError('unavailable', `List ${k.kind}: unexpected response from TorBox`);
           }
+          const items = (data ?? []) as TbItem[];
+          stats.pages++;
+          let fresh = 0;
+          for (const item of items) {
+            if (typeof item?.id !== 'number' || seen.has(item.id)) continue;
+            seen.add(item.id);
+            fresh++;
+            stats.items++;
+            if (!isAvailable(item)) {
+              stats.notReady++;
+              continue;
+            }
+            stats.available++;
+            for (const f of Array.isArray(item.files) ? item.files : []) {
+              if (typeof f?.id !== 'number' || typeof f.name !== 'string' || !f.name) {
+                stats.badFiles++;
+                continue;
+              }
+              const name = f.short_name || f.name.split('/').pop() || f.name;
+              stats.files++;
+              yield {
+                id: `${k.prefix}:${item.id}:${f.id}`,
+                name,
+                // `name` is the path inside the download, usually prefixed with the item folder.
+                path: f.name.includes('/') ? f.name : `${item.name}/${name}`,
+                size: typeof f.size === 'number' ? f.size : 0,
+                ...(item.updated_at ? { modifiedAt: new Date(item.updated_at) } : {}),
+              };
+            }
+          }
+          // A short page is the last one. A page with nothing new means the API
+          // ignored `offset`; stop rather than loop forever.
+          if (items.length < PAGE || fresh === 0) break;
         }
-        if (items.length < PAGE) break;
+        log.info('torbox listing', { kind: k.kind, ...stats });
+      } catch (err) {
+        log.warn('torbox listing failed', { kind: k.kind, ...stats, error: (err as Error).message });
+        if (signal.aborted || (err instanceof ProviderError && err.code === 'auth')) throw err;
+        firstError ??= err;
       }
     }
+    if (firstError) throw firstError;
   }
 
   async resolveLink(fileId: string, { signal }: ResolveOptions): Promise<DebridResolvedLink> {
@@ -151,6 +198,16 @@ class TorBoxAdapter implements DebridAdapter {
     if (!url) throw new ProviderError('unavailable', 'TorBox did not return a download link');
     return { url, expiresAt: new Date(this.#o.now() + LINK_TTL_MS) };
   }
+}
+
+/**
+ * Finished and stored on TorBox, so requestdl will work. Both fields are
+ * optional in TorBox's schema: an explicit `false` on either excludes the
+ * item; otherwise one of them must be `true`.
+ */
+function isAvailable(item: TbItem): boolean {
+  if (item.download_finished === false || item.download_present === false) return false;
+  return item.download_finished === true || item.download_present === true;
 }
 
 function torBoxDeviceFlow(o: Required<TorBoxOptions>): DeviceFlowHandler {
