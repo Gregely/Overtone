@@ -1,4 +1,4 @@
-/** Normalized MusicBrainz shapes used by the matcher and library. */
+/** Normalized MusicBrainz shapes used by the matcher, catalogue and library. */
 
 export interface MbArtistRef {
   id: string;
@@ -52,10 +52,38 @@ export interface MbRelease extends MbReleaseRef {
   tracks: MbReleaseTrack[];
 }
 
-/** The subset of the client the matcher needs; mocked in tests. */
+/** An artist as returned by artist search. */
+export interface MbArtist {
+  id: string;
+  name: string;
+  sortName: string;
+  disambiguation: string | null;
+}
+
+/** A release group (album) as returned by release-group search / artist discography. */
+export interface MbReleaseGroup {
+  id: string;
+  title: string;
+  credit: MbCredit;
+  primaryType: string | null;
+  secondaryTypes: string[];
+  firstReleaseDate: string | null;
+}
+
+/** An artist with their release-group discography. */
+export interface MbArtistDetail extends MbArtist {
+  releaseGroups: MbReleaseGroup[];
+}
+
+/** The subset of the client the matcher/catalogue needs; mocked in tests. */
 export interface MusicBrainzApi {
   searchRecordings(query: string, limit?: number): Promise<MbRecording[]>;
   searchReleases(query: string, limit?: number): Promise<MbReleaseRef[]>;
+  searchArtists(query: string, limit?: number): Promise<MbArtist[]>;
+  searchReleaseGroups(query: string, limit?: number): Promise<MbReleaseGroup[]>;
   getRelease(mbid: string): Promise<MbRelease | null>;
   getRecording(mbid: string): Promise<MbRecording | null>;
+  getArtist(mbid: string): Promise<MbArtistDetail | null>;
+  /** Resolve a release group to its metadata and a representative release (with tracklist). */
+  getReleaseGroup(mbid: string): Promise<{ releaseGroup: MbReleaseGroup; release: MbRelease } | null>;
 }

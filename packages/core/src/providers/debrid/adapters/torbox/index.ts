@@ -183,6 +183,25 @@ class TorBoxAdapter implements DebridAdapter {
     if (item.download_present === false) return { status: 'error', message: 'TorBox could not download the torrent' };
     return { status: 'processing', progress: null };
   }
+
+  async listTorrentFiles(remoteId: string, { signal }: CallOptions): Promise<DebridFile[]> {
+    const items = (await this.#get<TbItem[] | null>('/torrents/mylist?bypass_cache=true&offset=0&limit=1000', 'List torrent files', signal)) ?? [];
+    const item = items.find((i) => String(i.id) === String(remoteId));
+    if (!item) return [];
+    return (item.files ?? []).map((f) => {
+      const name = f.short_name || f.name.split('/').pop() || f.name;
+      return { id: String(f.id), name, path: f.name, size: f.size };
+    });
+  }
+
+  async resolveFileLink(remoteId: string, fileId: string, { signal }: ResolveOptions): Promise<DebridResolvedLink> {
+    if (!/^\d+$/.test(remoteId) || !/^\d+$/.test(fileId)) throw new ProviderError('not_found', 'Unknown TorBox file');
+    // requestdl takes the key as `token` (documented); our fetch logging never includes query strings.
+    const q = new URLSearchParams({ token: this.#key, torrent_id: remoteId, file_id: fileId });
+    const url = await this.#get<string>(`/torrents/requestdl?${q}`, 'Get stream link', signal);
+    if (!url) throw new ProviderError('unavailable', 'TorBox did not return a download link');
+    return { url, expiresAt: new Date(this.#o.now() + LINK_TTL_MS) };
+  }
 }
 
 function torBoxDeviceFlow(o: Required<TorBoxOptions>): DeviceFlowHandler {

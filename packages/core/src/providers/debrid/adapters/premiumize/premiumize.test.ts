@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { json, mockHttp } from '../../../../testing/mock-http.js';
 import { collect, createTestContext } from '../../../../testing/provider-context.js';
-import { createDebridPlugin } from '../../index.js';
+import { createDebridPlugin, type DebridSourceProvider } from '../../index.js';
 import { createPremiumizeAdapter } from './index.js';
 
 // Fixtures follow https://www.premiumize.me/api; ids and keys are fake.
@@ -22,15 +22,18 @@ function setup(opts: { retries?: boolean } = {}) {
     }))
     .on('GET', `${API}/item/details`, (req) => ok({ id: req.url.searchParams.get('id'), name: '01 Track.flac', size: 900, mime_type: 'audio/flac', link: 'https://cdn.premiumize.me/dl/f1' }));
   const ctx = createTestContext({ fetch: http.fetch, ...(opts.retries ? { retries: true } : {}) });
-  const provider = createDebridPlugin(createPremiumizeAdapter()).create({ apiKey: 'pm-key', probeTags: false }, ctx);
+  const provider = createDebridPlugin(createPremiumizeAdapter()).create({ apiKey: 'pm-key', probeTags: false }, ctx) as unknown as DebridSourceProvider;
   return { http, ctx, provider };
 }
 
 describe('Premiumize adapter', () => {
-  it('lists audio in the cloud', async () => {
+  it('lists files in the cloud (adapter)', async () => {
     const { provider, http } = setup();
-    const files = await collect(provider.listLibrary({ signal }));
-    expect(files.map((f) => [f.id, f.path])).toEqual([['f1', 'Music/Artist/Album/01 Track.flac']]);
+    const files = await collect(provider.adapter.listFiles({ signal }));
+    expect(files.map((f) => [f.id, f.path])).toEqual([
+      ['f1', 'Music/Artist/Album/01 Track.flac'],
+      ['f2', 'Video/movie.mkv'],
+    ]);
     expect(http.calls[0]!.headers.get('authorization')).toBe('Bearer pm-key');
   });
 
@@ -60,16 +63,16 @@ describe('Premiumize adapter', () => {
     const { provider, http } = setup();
     http.on('GET', (u) => u.href.startsWith(API), err('authentication_failed'));
     expect(await provider.testConnection!({ signal })).toMatchObject({ ok: false, message: expect.stringContaining('rejected the API key') });
-    await expect(collect(provider.listLibrary({ signal }))).rejects.toMatchObject({ code: 'auth' });
+    await expect(collect(provider.adapter.listFiles({ signal }))).rejects.toMatchObject({ code: 'auth' });
   });
 
   it('maps rate_limit_reached and HTTP 429 (with backoff) correctly', async () => {
     const a = setup();
     a.http.on('GET', `${API}/item/listall`, err('rate_limit_reached'));
-    await expect(collect(a.provider.listLibrary({ signal }))).rejects.toMatchObject({ code: 'rate_limited' });
+    await expect(collect(a.provider.adapter.listFiles({ signal }))).rejects.toMatchObject({ code: 'rate_limited' });
     const b = setup({ retries: true });
     b.http.on('GET', `${API}/item/listall`, json({}, 429, { 'retry-after': '1' }), 1);
-    expect(await collect(b.provider.listLibrary({ signal }))).toHaveLength(1);
+    expect(await collect(b.provider.adapter.listFiles({ signal }))).toHaveLength(2);
     expect(b.ctx.delays).toEqual([1000]);
   });
 
@@ -78,13 +81,13 @@ describe('Premiumize adapter', () => {
     http.on('GET', `${API}/item/details`, err('not_found'));
     await expect(provider.resolveStream('f1', { signal })).rejects.toMatchObject({ code: 'not_found' });
     http.fail('GET', (u) => u.href.startsWith(API));
-    await expect(collect(provider.listLibrary({ signal }))).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(collect(provider.adapter.listFiles({ signal }))).rejects.toMatchObject({ code: 'unavailable' });
   });
 
   it('handles an empty cloud', async () => {
     const { provider, http } = setup();
     http.on('GET', `${API}/item/listall`, ok({ files: [] }));
-    expect(await collect(provider.listLibrary({ signal }))).toEqual([]);
+    expect(await collect(provider.adapter.listFiles({ signal }))).toEqual([]);
   });
 
   it('offers "Log in with Premiumize" only with a registered client id', async () => {

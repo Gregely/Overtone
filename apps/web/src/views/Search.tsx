@@ -6,6 +6,7 @@ import { AlbumGrid } from '../ui/media';
 import { EmptyState, ErrorState, Spinner } from '../ui/states';
 import { TrackList } from '../ui/TrackList';
 import { ArtistList } from './Library';
+import { CatalogueResults } from './Catalogue';
 
 export function SearchView() {
   const [params, setParams] = useSearchParams();
@@ -51,25 +52,31 @@ export function SearchView() {
         <Spinner label="Searching" />
       ) : results.error && !data ? (
         <ErrorState error={results.error} onRetry={() => void results.refetch()} />
-      ) : count === 0 ? (
-        <EmptyState title={`Nothing found for “${urlQ}”`} icon="search" />
+      ) : count === 0 && !results.isPending ? (
+        <EmptyState title={`Nothing found for “${urlQ}”`} icon="search">
+          <p>Try the catalogue search below for artists and albums not in your library.</p>
+        </EmptyState>
       ) : (
         <>
+          <section aria-labelledby="s-catalogue" className="stack-sm">
+            <h2 id="s-catalogue">Catalogue</h2>
+            <CatalogueResults q={urlQ} />
+          </section>
           {data!.tracks.length > 0 && (
             <section aria-labelledby="s-tracks" className="stack-sm">
-              <h2 id="s-tracks">Tracks</h2>
+              <h2 id="s-tracks">In your library</h2>
               <TrackList tracks={data!.tracks} label="Matching tracks" />
             </section>
           )}
           {data!.albums.length > 0 && (
             <section aria-labelledby="s-albums" className="stack-sm">
-              <h2 id="s-albums">Albums</h2>
+              <h2 id="s-albums">Albums in your library</h2>
               <AlbumGrid albums={data!.albums} label="Matching albums" />
             </section>
           )}
           {data!.artists.length > 0 && (
             <section aria-labelledby="s-artists" className="stack-sm">
-              <h2 id="s-artists">Artists</h2>
+              <h2 id="s-artists">Artists in your library</h2>
               <ArtistList artists={data!.artists} />
             </section>
           )}

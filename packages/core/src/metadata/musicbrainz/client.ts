@@ -1,7 +1,9 @@
 import type { Database } from '../../db/database.js';
 import type { HttpFetch } from '../../platform/types.js';
-import { mapRecording, mapRelease, mapReleaseRef } from './mapping.js';
-import type { MbRecording, MbRelease, MbReleaseRef, MusicBrainzApi } from './types.js';
+import { mapArtist, mapArtistDetail, mapRecording, mapRelease, mapReleaseGroup, mapReleaseRef } from './mapping.js';
+import type { MbArtist, MbArtistDetail, MbRecording, MbRelease, MbReleaseGroup, MbReleaseRef, MusicBrainzApi } from './types.js';
+
+type Json = Record<string, any>;
 
 const DAY = 24 * 3600 * 1000;
 const TTL = { entity: 30 * DAY, search: 7 * DAY, miss: 1 * DAY };
@@ -84,6 +86,16 @@ export class MusicBrainzClient implements MusicBrainzApi {
     return ((body?.releases as unknown[]) ?? []).map((r) => mapReleaseRef(r as never));
   }
 
+  async searchArtists(query: string, limit = 8): Promise<MbArtist[]> {
+    const body = await this.#get(`artist?query=${encodeURIComponent(query)}&limit=${limit}`, TTL.search);
+    return ((body?.artists as unknown[]) ?? []).map((r) => mapArtist(r as never));
+  }
+
+  async searchReleaseGroups(query: string, limit = 12): Promise<MbReleaseGroup[]> {
+    const body = await this.#get(`release-group?query=${encodeURIComponent(query)}&limit=${limit}`, TTL.search);
+    return ((body?.['release-groups'] as unknown[]) ?? []).map((r) => mapReleaseGroup(r as never));
+  }
+
   async getRelease(mbid: string): Promise<MbRelease | null> {
     const body = await this.#get(`release/${encodeURIComponent(mbid)}?inc=recordings+artist-credits+release-groups+media`, TTL.entity);
     return body ? mapRelease(body as never) : null;
@@ -95,6 +107,22 @@ export class MusicBrainzClient implements MusicBrainzApi {
       TTL.entity,
     );
     return body ? mapRecording(body as never) : null;
+  }
+
+  async getArtist(mbid: string): Promise<MbArtistDetail | null> {
+    const body = await this.#get(`artist/${encodeURIComponent(mbid)}?inc=release-groups`, TTL.entity);
+    return body ? mapArtistDetail(body as never) : null;
+  }
+
+  async getReleaseGroup(mbid: string): Promise<{ releaseGroup: MbReleaseGroup; release: MbRelease } | null> {
+    const body = await this.#get(`release-group/${encodeURIComponent(mbid)}?inc=releases+artist-credits`, TTL.entity);
+    if (!body) return null;
+    const releaseGroup = mapReleaseGroup(body as never);
+    const releases = (Array.isArray((body as Json).releases) ? ((body as Json).releases as Json[]) : []).map((r) => mapReleaseRef(r));
+    const release = releases[0];
+    if (!release) return null;
+    const detail = await this.getRelease(release.id);
+    return detail ? { releaseGroup, release: detail } : null;
   }
 
   /** Returns parsed JSON, or null for 404 (cached as a miss). Identical concurrent calls share one lookup. */

@@ -15,6 +15,7 @@
  * layer strips query strings from logs, so the key never reaches a log line.
  */
 import { ProviderError } from '../providers/errors.js';
+import { urlForLog } from '../providers/fetch.js';
 import { send } from '../providers/http.js';
 import type { IndexerContext, IndexerHit, IndexerSearchQuery, TorrentIndexer, TorrentIndexerConfig, TorrentIndexerDefinition, TorrentIndexerTestResult } from './types.js';
 import { attr, child, childText, children, parseXml, type XmlElement } from './xml.js';
@@ -38,17 +39,21 @@ export function createTorznabIndexer(config: TorrentIndexerConfig, ctx: IndexerC
   async function fetchXml(params: URLSearchParams, what: string, signal: AbortSignal): Promise<XmlElement> {
     const headers: Record<string, string> = { accept: 'application/rss+xml, application/xml, text/xml, */*' };
     withAuth(params, headers);
-    const res = await send(ctx, searchUrl(params), { headers, signal }, what);
+    const url = searchUrl(params);
+    const res = await send(ctx, url, { headers, signal }, what);
+    ctx.logger.debug(`${what}: ${res.status} ${res.headers.get('content-type') ?? ''} ${urlForLog(url)}`);
     if (!res.ok) {
       await res.body?.cancel();
+      const ct = res.headers.get('content-type')?.split(';')[0] ?? '';
       if (res.status === 401 || res.status === 403) throw new ProviderError('auth', `${what}: the indexer rejected the API key`);
-      throw new ProviderError('unavailable', `${what}: the indexer returned HTTP ${res.status}`);
+      throw new ProviderError('unavailable', `${what}: the indexer returned HTTP ${res.status}${ct ? ` (${ct})` : ''}`);
     }
     const text = await res.text();
     try {
       return parseXml(text);
     } catch {
-      throw new ProviderError('unavailable', `${what}: the indexer returned something that isn't Torznab XML`);
+      const ct = res.headers.get('content-type')?.split(';')[0] ?? '';
+      throw new ProviderError('unavailable', `${what}: the indexer returned ${ct ? `${ct} instead of ` : ''}Torznab XML`);
     }
   }
 

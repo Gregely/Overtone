@@ -61,9 +61,28 @@ async function setup(discover: DiscoverResponseDto, status = 200) {
         { sourceId: 'ad', name: 'AllDebrid', providerId: 'alldebrid', retrieval: true },
         { sourceId: 'rd', name: 'RealDebrid', providerId: 'real-debrid', retrieval: false },
       ]);
-    if (u.pathname === '/api/debrid/ad/add-magnet') return json({ id: '33', status: 'queued' });
-    if (u.pathname.startsWith('/api/debrid/ad/status/')) return json({ status: 'finished' });
-    if (u.pathname === '/api/sources/ad/scan') return json({}, 202);
+    if (u.pathname === '/api/retrieval/jobs')
+      return json({
+        job: {
+          id: 'job-1',
+          providerId: 'ad',
+          providerName: 'AllDebrid',
+          status: 'processing',
+          infohash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          title: 'Album (1971)',
+          artist: 'Artist',
+          album: 'Album',
+          year: 1971,
+          size: 300000000,
+          progress: null,
+          error: null,
+          filesProcessed: false,
+          createdAt: '2026-11-01T00:00:00Z',
+          updatedAt: '2026-11-01T00:00:00Z',
+          completedAt: null,
+        },
+        duplicate: false,
+      });
     return json({ error: { code: 'not_found', message: 'no route' } }, 404);
   });
   const api = new HttpTransport({ storage: memoryStore(), serverUrl: 'http://srv', fetch: fetch as unknown as typeof fetch });
@@ -98,13 +117,13 @@ describe('FindSourcesDialog', () => {
     await user.click(await screen.findByText('Album (1971)'));
     expect(await screen.findByText('Retrieve with a connected provider')).toBeInTheDocument();
     expect(screen.getByText('Coming soon')).toBeInTheDocument();
-    expect(calls.some((c) => c.includes('add-magnet'))).toBe(false);
+    expect(calls.some((c) => c === 'POST /api/retrieval/jobs')).toBe(false);
 
     await user.click(screen.getByRole('button', { name: 'Retrieve with AllDebrid' }));
     expect(await screen.findByText('Add to AllDebrid?')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Add to AllDebrid' }));
-    await waitFor(() => expect(calls.some((c) => c === 'POST /api/debrid/ad/add-magnet')).toBe(true));
+    await waitFor(() => expect(calls.some((c) => c === 'POST /api/retrieval/jobs')).toBe(true));
   });
 
   it('uses the search-scope preference to search an album from a track', async () => {

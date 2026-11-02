@@ -1,49 +1,66 @@
-import type { FastifyInstance } from 'fastify';
-import type { DebridAddMagnetRequestDto } from '@overtone/shared';
-import { requireAdmin } from '../http/auth-hooks.js';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { CreateRetrievalJobRequestDto } from '@overtone/shared';
+import { serverCoverUrl, type ViewContext } from '@overtone/core';
+import { requireAdmin, userOf } from '../http/auth-hooks.js';
 import type { Services } from '../services.js';
 
-const sourceIdParam = {
+const jobIdParam = {
   type: 'object',
-  required: ['sourceId'],
-  properties: { sourceId: { type: 'string', minLength: 1, maxLength: 64 } },
+  required: ['id'],
+  properties: { id: { type: 'string', minLength: 1, maxLength: 100 } },
 } as const;
 
-const addMagnetBody = {
+const createJobBody = {
   type: 'object',
   additionalProperties: false,
-  required: ['magnet'],
-  properties: { magnet: { type: 'string', minLength: 1, maxLength: 2000 } },
+  required: ['providerId', 'magnet'],
+  properties: {
+    providerId: { type: 'string', minLength: 1, maxLength: 64 },
+    magnet: { type: 'string', minLength: 1, maxLength: 2000 },
+    title: { type: 'string', maxLength: 300 },
+    artist: { type: 'string', maxLength: 300 },
+    album: { type: 'string', maxLength: 300 },
+    year: { type: 'integer', minimum: 1900, maximum: 2100 },
+    size: { type: 'integer', minimum: 0 },
+  },
 } as const;
 
 /**
- * Debrid retrieval ("add to debrid"). Admin-only: submitting a magnet changes
- * the shared debrid account, and only ever happens on explicit user action.
+ * Debrid retrieval. Admin-only: submitting a magnet changes the shared debrid
+ * account, and only ever happens on explicit user action. Retrieval is now
+ * backend-managed: jobs are created, polled and recovered here, not in the UI.
  */
 export async function debridRoutes(app: FastifyInstance, s: Services): Promise<void> {
+  const view = (req: FastifyRequest): ViewContext => ({
+    coverUrl: serverCoverUrl(s.auth.signArtworkToken(userOf(req).id)),
+    categoryOf: s.api.categoryOf,
+  });
+
   app.register(async (admin) => {
     admin.addHook('preHandler', requireAdmin);
 
     admin.get('/api/debrid/providers', async () => s.api.listDebridProviders());
 
-    admin.post<{ Params: { sourceId: string }; Body: DebridAddMagnetRequestDto }>(
-      '/api/debrid/:sourceId/add-magnet',
-      { schema: { params: sourceIdParam, body: addMagnetBody } },
-      async (req) => s.api.addMagnet(req.params.sourceId, req.body.magnet),
+    admin.get('/api/retrieval/jobs', async (req) => s.api.listRetrievalJobs(userOf(req).id));
+
+    admin.get<{ Params: { id: string } }>('/api/retrieval/jobs/:id', { schema: { params: jobIdParam } }, async (req) =>
+      s.api.getRetrievalJob(userOf(req).id, req.params.id),
     );
 
-    admin.get<{ Params: { sourceId: string; id: string } }>(
-      '/api/debrid/:sourceId/status/:id',
-      {
-        schema: {
-          params: {
-            type: 'object',
-            required: ['sourceId', 'id'],
-            properties: { sourceId: { type: 'string', maxLength: 64 }, id: { type: 'string', maxLength: 200 } },
-          },
-        },
-      },
-      async (req) => s.api.torrentStatus(req.params.sourceId, req.params.id),
+    admin.get<{ Params: { id: string } }>('/api/retrieval/jobs/:id/files', { schema: { params: jobIdParam } }, async (req) =>
+      s.api.retrievalJobFiles(userOf(req).id, req.params.id, view(req)),
+    );
+
+    admin.post<{ Body: CreateRetrievalJobRequestDto }>('/api/retrieval/jobs', { schema: { body: createJobBody } }, async (req, reply) =>
+      reply.code(201).send(await s.api.createRetrievalJob(userOf(req).id, req.body)),
+    );
+
+    admin.post<{ Params: { id: string } }>('/api/retrieval/jobs/:id/cancel', { schema: { params: jobIdParam } }, async (req) =>
+      s.api.cancelRetrievalJob(userOf(req).id, req.params.id),
+    );
+
+    admin.post<{ Params: { id: string } }>('/api/retrieval/jobs/:id/retry', { schema: { params: jobIdParam } }, async (req) =>
+      s.api.retryRetrievalJob(userOf(req).id, req.params.id),
     );
   });
 }

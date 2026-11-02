@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { json, mockHttp } from '../../../../testing/mock-http.js';
 import { collect, createTestContext } from '../../../../testing/provider-context.js';
-import { createDebridPlugin } from '../../index.js';
+import { createDebridPlugin, type DebridSourceProvider } from '../../index.js';
 import { createRealDebridAdapter, RD_OPEN_SOURCE_CLIENT_ID } from './index.js';
 
 // Fixtures follow the shapes documented at https://api.real-debrid.com/ (fake ids/tokens).
@@ -44,14 +44,14 @@ function setup(creds: Record<string, string> = { apiKey: 'test-key' }, opts: { r
     });
   const ctx = createTestContext({ fetch: http.fetch, ...(opts.retries ? { retries: true } : {}) });
   const plugin = createDebridPlugin(createRealDebridAdapter({ now: () => NOW }));
-  const provider = plugin.create({ ...creds, probeTags: false }, ctx);
+  const provider = plugin.create({ ...creds, probeTags: false }, ctx) as unknown as DebridSourceProvider;
   return { http, ctx, provider, plugin };
 }
 
 describe('Real-Debrid adapter', () => {
   it('lists audio in finished torrents and existing downloads, without duplicates', async () => {
     const { provider, http } = setup();
-    const files = await collect(provider.listLibrary({ signal }));
+    const files = await collect(provider.adapter.listFiles({ signal }));
     expect(files.map((f) => [f.id, f.path])).toEqual([
       ['t:TORR1:1', 'Artist - Album (2001)/01 - Intro.flac'],
       ['t:TORR1:3', 'Artist - Album (2001)/02 - Song.flac'],
@@ -65,8 +65,8 @@ describe('Real-Debrid adapter', () => {
 
   it('caches torrent contents between scans', async () => {
     const { provider, http } = setup();
-    await collect(provider.listLibrary({ signal }));
-    await collect(provider.listLibrary({ signal }));
+    await collect(provider.adapter.listFiles({ signal }));
+    await collect(provider.adapter.listFiles({ signal }));
     expect(http.to(`${API}/torrents/info/TORR1`)).toHaveLength(1);
   });
 
@@ -121,7 +121,7 @@ describe('Real-Debrid adapter', () => {
       ok: false,
       message: 'Check account: Real-Debrid rejected the credentials (expired or invalid). Log in again or paste a new API key.',
     });
-    await expect(collect(provider.listLibrary({ signal }))).rejects.toMatchObject({ code: 'auth' });
+    await expect(collect(provider.adapter.listFiles({ signal }))).rejects.toMatchObject({ code: 'auth' });
   });
 
   it('refreshes an expired OAuth access token, persists it, and retries', async () => {
@@ -158,7 +158,7 @@ describe('Real-Debrid adapter', () => {
   it('reports rate limiting when 429s persist', async () => {
     const { provider, http, ctx } = setup({ apiKey: 'k' }, { retries: true });
     http.on('GET', `${API}/torrents`, json({ error: 'too_many_requests', error_code: 34 }, 429));
-    await expect(collect(provider.listLibrary({ signal }))).rejects.toMatchObject({ code: 'rate_limited' });
+    await expect(collect(provider.adapter.listFiles({ signal }))).rejects.toMatchObject({ code: 'rate_limited' });
     expect(ctx.delays).toEqual([500, 1000]);
   });
 
@@ -172,7 +172,7 @@ describe('Real-Debrid adapter', () => {
     const { provider, http } = setup();
     http.on('GET', `${API}/torrents`, new Response(null, { status: 204 }));
     http.on('GET', `${API}/downloads`, new Response(null, { status: 204 }));
-    expect(await collect(provider.listLibrary({ signal }))).toEqual([]);
+    expect(await collect(provider.adapter.listFiles({ signal }))).toEqual([]);
   });
 
   it('pages through large accounts', async () => {
@@ -180,7 +180,7 @@ describe('Real-Debrid adapter', () => {
     const many = Array.from({ length: 1000 }, (_, i) => ({ id: `T${i}`, filename: `t${i}`, status: 'downloading', links: [] }));
     http.on('GET', (u) => u.pathname.endsWith('/torrents') && u.searchParams.get('page') === '1', json(many, 200, { 'x-total-count': '1001' }));
     http.on('GET', (u) => u.pathname.endsWith('/torrents') && u.searchParams.get('page') === '2', json([torrents[0]], 200, { 'x-total-count': '1001' }));
-    const files = await collect(provider.listLibrary({ signal }));
+    const files = await collect(provider.adapter.listFiles({ signal }));
     expect(files.filter((f) => f.id.startsWith('t:'))).toHaveLength(2);
     expect(http.to(`${API}/torrents`).map((c) => c.url.searchParams.get('limit'))).toEqual(['1000', '1000']);
   });

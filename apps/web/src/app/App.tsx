@@ -13,9 +13,11 @@ import { PlayerProvider } from '../player/react';
 import { SessionProvider, useSession } from '../session/session';
 import { AlbumView, ArtistView } from '../views/Album';
 import { BootScreen, LoginScreen, SetupScreen, UnreachableScreen } from '../views/Auth';
+import { CatalogueArtistView, CatalogueReleaseView } from '../views/Catalogue';
 import { HomeView } from '../views/Home';
 import { LibraryView } from '../views/Library';
 import { NowPlayingView } from '../views/NowPlaying';
+import { RetrievalView } from '../views/Retrieval';
 import { ReviewView } from '../views/Review';
 import { SearchView } from '../views/Search';
 import { SettingsView } from '../views/Settings';
@@ -173,8 +175,11 @@ export function AppRoutes() {
         <Route path="library/:tab" element={<LibraryView />} />
         <Route path="artists/:id" element={<ArtistView />} />
         <Route path="albums/:id" element={<AlbumView />} />
+        <Route path="catalogue/artists/:mbid" element={<CatalogueArtistView />} />
+        <Route path="catalogue/releases/:mbid" element={<CatalogueReleaseView />} />
         <Route path="search" element={<SearchView />} />
         <Route path="now-playing" element={<NowPlayingView />} />
+        <Route path="downloads" element={<RetrievalView />} />
         <Route path="review" element={<ReviewView />} />
         <Route path="settings" element={<SettingsView />} />
         <Route path="settings/sources" element={<SourcesView />} />

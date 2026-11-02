@@ -181,8 +181,29 @@ export class TorrentSourceManager {
     const kind = input.kind ?? row?.kind ?? 'torznab';
     const url = normalizeUrl(input.url ?? row?.url ?? '');
     const apiKey = input.apiKey === null ? '' : input.apiKey ?? (row ? (await this.#d.secrets.get(row.id)).apiKey : '') ?? '';
-    const indexerIds = id ? enabledIndexerIds(parseConfig(row!.config_json)) : [];
 
+    // For Prowlarr/Jackett the indexer-list call is itself the connection test:
+    // it proves the server is reachable and the key is valid, and returns the
+    // importable indexers — without running a (possibly slow) search across
+    // every configured indexer. A bare Torznab source falls through to a probe.
+    if (kind !== 'torznab' && apiKey) {
+      try {
+        const indexers = mergeIndexers(row, await this.#discoverIndexers(kind, url, apiKey, row?.id ?? 'test'));
+        this.#d.logger.info({ kind, url, indexers: indexers.length }, 'torrent source connection test succeeded');
+        return { ok: true, message: `Connected · ${indexers.length} indexer${indexers.length === 1 ? '' : 's'}`, indexers };
+      } catch (err) {
+        if (err instanceof ProviderError) {
+          this.#d.logger.info({ kind, url, error: err.message }, 'torrent source connection test failed');
+          return { ok: false, message: err.message };
+        }
+        if ((err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError') {
+          return { ok: false, message: 'Timed out reaching the indexer' };
+        }
+        throw err;
+      }
+    }
+
+    const indexerIds = id ? enabledIndexerIds(parseConfig(row!.config_json)) : [];
     const indexer = this.#registry(kind).create({ url: searchEndpoint(kind, url), apiKey, ...(indexerIds.length ? { indexerIds } : {}) }, this.#ctx(row?.id ?? 'test', () => [apiKey]));
     let result: TorrentIndexerTestResult;
     try {
@@ -192,17 +213,8 @@ export class TorrentSourceManager {
       else if ((err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError') result = { ok: false, message: 'Timed out reaching the indexer' };
       else result = { ok: false, message: `Couldn't test the connection (${(err as Error)?.message ?? 'unknown error'})` };
     }
-
-    let indexers: TorrentIndexerInfoDto[] | undefined;
-    if (kind !== 'torznab' && apiKey) {
-      try {
-        indexers = mergeIndexers(row, await this.#discoverIndexers(kind, url, apiKey, row?.id ?? 'test'));
-      } catch (err) {
-        if (err instanceof ProviderError) return { ok: false, message: err.message };
-        throw err;
-      }
-    }
-    return { ok: result.ok, message: result.message, ...(indexers ? { indexers } : {}) };
+    this.#d.logger.info({ kind, url, ok: result.ok, message: result.message }, 'torrent source connection test');
+    return { ok: result.ok, message: result.message };
   }
 
   async #discoverIndexers(kind: TorrentSourceKind, base: string, apiKey: string, sourceId: string): Promise<TorrentIndexerDescriptor[]> {

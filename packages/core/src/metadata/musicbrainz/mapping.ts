@@ -1,5 +1,5 @@
 /* Raw MusicBrainz JSON → normalized types. Defensive: MB omits fields freely. */
-import type { MbCredit, MbRecording, MbRelease, MbReleaseRef, MbReleaseTrack } from './types.js';
+import type { MbArtist, MbArtistDetail, MbCredit, MbRecording, MbRelease, MbReleaseGroup, MbReleaseRef, MbReleaseTrack } from './types.js';
 
 type Json = Record<string, any>;
 
@@ -10,6 +10,33 @@ export function mapCredit(raw: Json[] | undefined): MbCredit {
     artists: parts
       .filter((p) => p.artist?.id)
       .map((p) => ({ id: p.artist.id, name: p.artist.name ?? p.name ?? '', sortName: p.artist['sort-name'] ?? p.artist.name ?? '' })),
+  };
+}
+
+export function mapArtist(r: Json): MbArtist {
+  return {
+    id: r.id,
+    name: r.name ?? '',
+    sortName: r['sort-name'] ?? r.name ?? '',
+    disambiguation: r.disambiguation ?? null,
+  };
+}
+
+export function mapReleaseGroup(r: Json): MbReleaseGroup {
+  return {
+    id: r.id,
+    title: r.title ?? '',
+    credit: mapCredit(r['artist-credit']),
+    primaryType: r['primary-type'] ?? null,
+    secondaryTypes: r['secondary-types'] ?? [],
+    firstReleaseDate: r['first-release-date'] || null,
+  };
+}
+
+export function mapArtistDetail(r: Json): MbArtistDetail {
+  return {
+    ...mapArtist(r),
+    releaseGroups: Array.isArray(r['release-groups']) ? r['release-groups'].map(mapReleaseGroup) : [],
   };
 }
 

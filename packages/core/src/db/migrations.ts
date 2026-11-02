@@ -173,4 +173,35 @@ export const migrations: readonly string[] = [
     last_error   TEXT
   );
   `,
+  /* 4: persistent debrid retrieval jobs (backend-managed "add to debrid") */ `
+  CREATE TABLE retrieval_jobs (
+    id              TEXT    PRIMARY KEY,
+    -- Ownership context only (no FK: standalone mode has no users rows).
+    user_id         INTEGER NOT NULL,
+    provider_id     TEXT    NOT NULL,
+    provider_name   TEXT    NOT NULL,
+    infohash        TEXT    NOT NULL,
+    magnet          TEXT    NOT NULL,
+    title           TEXT,
+    artist          TEXT,
+    album           TEXT,
+    year            INTEGER,
+    size            INTEGER,
+    remote_id       TEXT,
+    status          TEXT    NOT NULL DEFAULT 'queued'
+                    CHECK (status IN ('queued', 'processing', 'complete', 'failed', 'canceled')),
+    progress        REAL,
+    error           TEXT,
+    files_processed INTEGER NOT NULL DEFAULT 0,
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL,
+    completed_at    INTEGER
+  );
+  CREATE INDEX retrieval_jobs_user ON retrieval_jobs(user_id, created_at DESC);
+  CREATE INDEX retrieval_jobs_status ON retrieval_jobs(status, updated_at);
+  -- At most one active job per (provider, infohash): the idempotency guard.
+  CREATE UNIQUE INDEX retrieval_jobs_active
+    ON retrieval_jobs(provider_id, infohash)
+    WHERE status IN ('queued', 'processing');
+  `,
 ];

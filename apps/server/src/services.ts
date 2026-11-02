@@ -14,6 +14,7 @@ import {
   type MusicBrainzApi,
   type ProviderRegistry,
   type ResolveCache,
+  type RetrievalService,
   type SourceManager,
   type TorrentSourceManager,
 } from '@overtone/core';
@@ -54,6 +55,7 @@ export interface Services {
   deviceLogins: DeviceLoginService;
   library: LibraryRepo;
   resolver: ResolveCache;
+  retrieval: RetrievalService;
   mb: MusicBrainzApi;
   matcher: Matcher;
   scanner: LibraryScanner;
@@ -82,6 +84,7 @@ export function createServices(config: Config, logger: Logger, o: ServiceOverrid
     logger,
     version: config.version,
     contact: config.mbContact,
+    ...(config.x1337BaseUrl ? { x1337BaseUrl: config.x1337BaseUrl } : {}),
     clock: { now, sleep: (ms) => new Promise((r) => setTimeout(r, ms)), schedule: (ms, fn) => {
       const t = setTimeout(fn, ms).unref();
       return () => clearTimeout(t);
@@ -102,6 +105,7 @@ export function createServices(config: Config, logger: Logger, o: ServiceOverrid
     deviceLogins: core.deviceLogins,
     library: core.library,
     resolver: core.resolver,
+    retrieval: core.retrieval,
     mb: core.mb,
     matcher: core.matcher,
     scanner: core.scanner,

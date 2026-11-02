@@ -20,6 +20,8 @@ export interface Config {
   version: string;
   /** Registered Premiumize OAuth client id (enables "Log in with Premiumize"). */
   premiumizeClientId: string | null;
+  /** 1337x base URL override (a working mirror); null = built-in default. */
+  x1337BaseUrl: string | null;
 }
 
 export class ConfigError extends Error {
@@ -52,6 +54,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, version = '0.0.
     trustProxy: boolEnv(env, 'OVERTONE_TRUST_PROXY', false),
     version,
     premiumizeClientId: env.OVERTONE_PREMIUMIZE_CLIENT_ID?.trim() || null,
+    x1337BaseUrl: env.OVERTONE_1337X_BASE_URL?.trim() || null,
   };
 }
 

@@ -1,19 +1,15 @@
 import { useEffect, useState } from 'react';
 import type { DebridProviderDto, DiscoverCachedStatus, DiscoverRequestDto, DiscoverResultDto } from '@overtone/shared';
-import { useAddMagnet, useDebridProviders, useDiscover, usePreferences, useSavePreferences, useScan, useTorrentStatus } from '../api/hooks';
+import { useCreateRetrievalJob, useDebridProviders, useDiscover, usePreferences, useSavePreferences } from '../api/hooks';
 import { useIsAdmin } from '../app/context';
 import { Dialog } from '../ui/Dialog';
 import { formatBytes, plural } from '../ui/format';
 import { Icon } from '../ui/Icon';
 import { EmptyState, ErrorState, errorMessage, Spinner } from '../ui/states';
 
-export interface FindSourcesTarget {
-  kind: 'track' | 'album';
-  id: number;
-  /** For a track, its album id (used when the search scope is "complete album"). */
-  albumId?: number;
-  title: string;
-}
+export type FindSourcesTarget =
+  | { kind: 'track' | 'album'; id: number; albumId?: number; title: string }
+  | { kind: 'catalogue'; title: string; query: { title: string; artist?: string; album?: string; year?: number } };
 
 const CACHED_LABEL: Record<DiscoverCachedStatus, string> = {
   cached: 'Cached',
@@ -22,20 +18,25 @@ const CACHED_LABEL: Record<DiscoverCachedStatus, string> = {
   unavailable: 'Coming soon',
 };
 
-/** "Find sources": discover and retrieve releases for a track or album. */
+/** "Find sources": discover and retrieve releases for a track, album or catalogue entry. */
 export function FindSourcesDialog({ target, onClose }: { target: FindSourcesTarget; onClose: () => void }) {
   const discover = useDiscover();
   const prefs = usePreferences();
   const body = (): DiscoverRequestDto => {
+    if (target.kind === 'catalogue') return { query: target.query, type: 'album' };
     if (target.kind === 'album') return { albumId: target.id };
     const scope = prefs.data?.searchScope ?? 'auto';
     return scope === 'album' && target.albumId ? { albumId: target.albumId } : { trackId: target.id };
   };
   const run = () => discover.mutate(body());
+  const key =
+    target.kind === 'catalogue'
+      ? `cat:${target.query.title}:${target.query.artist ?? ''}:${target.query.album ?? ''}:${target.query.year ?? ''}`
+      : `${target.kind}:${target.id}:${target.albumId ?? ''}`;
   useEffect(() => {
     if (!prefs.isPending) run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target.kind, target.id, target.albumId, prefs.data?.searchScope, prefs.isPending]);
+  }, [key, prefs.data?.searchScope, prefs.isPending]);
 
   return (
     <Dialog open onClose={onClose} title={`Find sources · ${target.title}`}>
@@ -136,29 +137,13 @@ function ResultDetails({ result: r }: { result: DiscoverResultDto }) {
 function RetrievalPanel({ result }: { result: DiscoverResultDto }) {
   const admin = useIsAdmin();
   const providers = useDebridProviders();
-  const add = useAddMagnet();
-  const scan = useScan();
+  const create = useCreateRetrievalJob();
   const prefs = usePreferences();
   const savePrefs = useSavePreferences();
   const magnet = result.magnet ?? (result.infoHash ? `magnet:?xt=urn:btih:${result.infoHash}` : null);
 
   const [confirming, setConfirming] = useState<DebridProviderDto | null>(null);
-  const [job, setJob] = useState<{ sourceId: string; id: string } | null>(null);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
-  const status = useTorrentStatus(job?.sourceId ?? null, job?.id ?? null);
-
-  useEffect(() => {
-    if (!job || !status.data) return;
-    if (status.data.status === 'finished') {
-      scan.mutate(job.sourceId);
-      if (prefs.data?.rememberLastProvider) savePrefs.mutate({ ...prefs.data, preferredProvider: job.sourceId });
-      setNotice({ ok: true, text: 'Added to debrid. The new files are being scanned into your library.' });
-      setJob(null);
-    } else if (status.data.status === 'error') {
-      setNotice({ ok: false, text: status.data.message });
-      setJob(null);
-    }
-  }, [status.data, job, scan, prefs.data, savePrefs]);
 
   if (!admin) return <p className="small muted">Only admins can retrieve releases.</p>;
   if (!magnet) return <p className="small muted">This result has no magnet link to retrieve.</p>;
@@ -179,34 +164,48 @@ function RetrievalPanel({ result }: { result: DiscoverResultDto }) {
               {p.sourceId === preferred && <span className="badge accent">Preferred</span>}
               {!p.retrieval ? <span className="badge">Coming soon</span> : cached ? <span className={`badge${cached === 'cached' ? ' accent' : ''}`}>{CACHED_LABEL[cached]}</span> : null}
             </span>
-            <button type="button" className="btn small" disabled={!p.retrieval || Boolean(job)} aria-label={`Retrieve with ${p.name}`} onClick={() => setConfirming(p)}>
+            <button type="button" className="btn small" disabled={!p.retrieval} aria-label={`Retrieve with ${p.name}`} onClick={() => setConfirming(p)}>
               Retrieve
             </button>
           </div>
         );
       })}
-      {job && (
-        <p className="banner" role="status">
-          <span className="spinner" aria-hidden="true" /> Retrieving…
-        </p>
-      )}
       {notice && (
         <p className={`banner ${notice.ok ? 'ok' : 'error'}`} role="status">
           {notice.text}
         </p>
       )}
-      {add.error && <p className="banner error" role="alert">{errorMessage(add.error)}</p>}
+      {create.error && <p className="banner error" role="alert">{errorMessage(create.error)}</p>}
       <Dialog open={Boolean(confirming)} onClose={() => setConfirming(null)} title={`Add to ${confirming?.name}?`}>
         <p>This adds “{result.title}” to your {confirming?.name} account. Overtone only retrieves content you explicitly choose.</p>
         <div className="row">
           <button
             type="button"
             className="btn primary"
-            disabled={add.isPending}
+            disabled={create.isPending}
             onClick={() => {
               const provider = confirming!;
               setConfirming(null);
-              add.mutate({ sourceId: provider.sourceId, magnet }, { onSuccess: (r) => setJob({ sourceId: provider.sourceId, id: r.id }) });
+              create.mutate(
+                {
+                  providerId: provider.sourceId,
+                  magnet,
+                  ...(result.title ? { title: result.title } : {}),
+                  ...(result.artist ? { artist: result.artist } : {}),
+                  ...(result.album ? { album: result.album } : {}),
+                  ...(result.year != null ? { year: result.year } : {}),
+                  ...(result.size != null ? { size: result.size } : {}),
+                },
+                {
+                  onSuccess: (res) => {
+                    if (prefs.data?.rememberLastProvider) savePrefs.mutate({ ...prefs.data, preferredProvider: provider.sourceId });
+                    setNotice({
+                      ok: true,
+                      text: res.duplicate ? 'This release is already being retrieved.' : `Added to ${provider.name}. Track its progress in Downloads.`,
+                    });
+                  },
+                },
+              );
             }}
           >
             Add to {confirming?.name}

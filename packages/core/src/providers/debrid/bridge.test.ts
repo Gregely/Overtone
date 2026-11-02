@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { collect, createTestContext } from '../../testing/provider-context.js';
 import { ProviderError } from '../errors.js';
-import { createDebridPlugin, DEFAULT_LINK_TTL_MS } from './index.js';
+import { createDebridPlugin, DEFAULT_LINK_TTL_MS, type DebridSourceProvider } from './index.js';
 import type { DebridAdapter, DebridAdapterDefinition, DebridCredentials } from './types.js';
 
 const signal = new AbortController().signal;
@@ -46,26 +46,21 @@ describe('createDebridPlugin', () => {
     expect(manifest.configSchema.deviceLogin).toEqual({ label: 'Log in with FakeDebrid', help: expect.any(String), replaces: ['apiKey', 'refreshToken'] });
   });
 
-  it('lists only audio files and fills in MIME types', async () => {
+  it('does not enumerate the account into the library (retrieval-only)', async () => {
     const { def } = definition({
       listFiles: async function* () {
         yield { id: 't1:1', name: '01 Intro.flac', path: 'Album/01 Intro.flac', size: 10 };
-        yield { id: 't1:2', name: 'cover.jpg', path: 'Album/cover.jpg', size: 1 };
-        yield { id: 't1:3', name: 'Album.cue', path: 'Album/Album.cue', size: 1 };
-        yield { id: 't2:1', name: 'movie.mkv', path: 'Movie/movie.mkv', size: 1 };
-        yield { id: 't3:1', name: 'song.mp3', path: 'song.mp3', size: 5 };
       },
     });
     const provider = createDebridPlugin(def).create({ apiKey: 'k' }, createTestContext());
     const files = await collect(provider.listLibrary({ signal }));
-    expect(files.map((f) => f.id)).toEqual(['t1:1', 't3:1']);
-    expect(files[0]).toMatchObject({ mimeType: 'audio/flac', path: 'Album/01 Intro.flac' });
+    expect(files).toEqual([]);
   });
 
   it('passes only credential keys to the adapter', () => {
     const { def, create } = definition({}, { managedSecrets: ['refreshToken'] });
-    const provider = createDebridPlugin(def).create({ apiKey: 'k', refreshToken: 'r', unrelated: 'x' }, createTestContext());
-    void provider.listLibrary({ signal })[Symbol.asyncIterator]().next();
+    const provider = createDebridPlugin(def).create({ apiKey: 'k', refreshToken: 'r', unrelated: 'x' }, createTestContext()) as unknown as DebridSourceProvider;
+    void provider.adapter; // build the adapter lazily
     expect(create.mock.calls[0]?.[0]).toEqual({ apiKey: 'k', refreshToken: 'r' });
   });
 

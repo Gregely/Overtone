@@ -41,3 +41,4 @@ export * from './api/router.js';
 export * from './library/backup.js';
 export * from './metadata/ranged.js';
 export * from './discovery/index.js';
+export * from './retrieval/index.js';

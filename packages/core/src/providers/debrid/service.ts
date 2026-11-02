@@ -16,7 +16,7 @@ import type { ProviderRegistry } from '../registry.js';
 import type { SourceManager } from '../../sources/manager.js';
 import { DebridSourceProvider } from './index.js';
 import { isMagnetUri } from './magnet.js';
-import type { DebridAdapter, DebridAddResult, DebridCachedResult, DebridTorrentRef, DebridTorrentStatus } from './types.js';
+import type { DebridAdapter, DebridAddResult, DebridCachedResult, DebridFile, DebridResolvedLink, DebridTorrentRef, DebridTorrentStatus } from './types.js';
 
 export type CachedStatus = 'cached' | 'uncached' | 'unavailable' | 'unknown';
 
@@ -102,6 +102,45 @@ export class DebridService {
     return value;
   }
 
+  /** Batch cached availability for many info hashes across connected providers. Never throws. */
+  async checkCachedBatch(hashes: string[], sourceIds?: string[]): Promise<Map<string, DebridCachedStatus[]>> {
+    const providers = await this.listProviders();
+    const targets = sourceIds ? providers.filter((p) => sourceIds.includes(p.sourceId)) : providers;
+    const unique = [...new Set(hashes.map((h) => h.toLowerCase()))];
+    const out = new Map<string, DebridCachedStatus[]>();
+    for (const h of unique) out.set(h, []);
+
+    await Promise.all(
+      targets.map(async (p) => {
+        if (!p.retrieval) {
+          for (const h of unique) out.get(h)!.push({ providerId: p.sourceId, providerName: p.name, status: 'unavailable' });
+          return;
+        }
+        try {
+          const adapter = await this.#adapter(p.sourceId);
+          let results: Map<string, DebridCachedResult>;
+          if (adapter.checkCachedBatch) {
+            results = await adapter.checkCachedBatch(unique, { signal: AbortSignal.timeout(15_000) });
+          } else if (adapter.checkCached) {
+            results = new Map();
+            for (const h of unique) results.set(h, await adapter.checkCached({ infoHash: h }, { signal: AbortSignal.timeout(10_000) }));
+          } else {
+            for (const h of unique) out.get(h)!.push({ providerId: p.sourceId, providerName: p.name, status: 'unavailable' });
+            return;
+          }
+          for (const h of unique) {
+            const r = results.get(h);
+            const status: CachedStatus = !r || r.unknown ? 'unknown' : r.cached ? 'cached' : 'uncached';
+            out.get(h)!.push({ providerId: p.sourceId, providerName: p.name, status });
+          }
+        } catch {
+          for (const h of unique) out.get(h)!.push({ providerId: p.sourceId, providerName: p.name, status: 'unknown' });
+        }
+      }),
+    );
+    return out;
+  }
+
   async addMagnet(sourceId: string, magnet: string): Promise<DebridAddResult> {
     if (!isMagnetUri(magnet)) throw new ProviderError('config', 'Not a valid magnet link');
     const adapter = await this.#adapter(sourceId);
@@ -113,5 +152,19 @@ export class DebridService {
     const adapter = await this.#adapter(sourceId);
     if (!adapter.getStatus) throw new ProviderError('config', 'This provider does not support status checks');
     return adapter.getStatus(id, { signal: AbortSignal.timeout(20_000) });
+  }
+
+  /** List the files of one submitted torrent (job-scoped; does not enumerate the account). */
+  async listJobFiles(sourceId: string, remoteId: string): Promise<DebridFile[]> {
+    const adapter = await this.#adapter(sourceId);
+    if (!adapter.listTorrentFiles) throw new ProviderError('config', 'This provider does not support listing retrieval files');
+    return adapter.listTorrentFiles(remoteId, { signal: AbortSignal.timeout(20_000) });
+  }
+
+  /** Resolve one file within a submitted torrent to a direct link (job-scoped). */
+  async resolveJobFile(sourceId: string, remoteId: string, fileId: string): Promise<DebridResolvedLink> {
+    const adapter = await this.#adapter(sourceId);
+    if (!adapter.resolveFileLink) throw new ProviderError('config', 'This provider does not support resolving retrieval files');
+    return adapter.resolveFileLink(remoteId, fileId, { signal: AbortSignal.timeout(30_000) });
   }
 }

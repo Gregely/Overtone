@@ -24,7 +24,7 @@ import { sha256Hex } from '../../../../crypto.js';
 import { ProviderError } from '../../../errors.js';
 import { form, readJson, send } from '../../../http.js';
 import type { CallOptions, DeviceFlowContext, DeviceFlowHandler, ProviderContext, ResolveOptions } from '../../../types.js';
-import { refToInfoHash, refToMagnet } from '../../magnet.js';
+import { infoHashToMagnet, magnetInfoHash, refToInfoHash, refToMagnet } from '../../magnet.js';
 import type { DebridAccountInfo, DebridAdapter, DebridAdapterDefinition, DebridAddResult, DebridCachedResult, DebridCredentials, DebridFile, DebridResolvedLink, DebridTorrentRef, DebridTorrentStatus } from '../../types.js';
 
 export interface AllDebridOptions {
@@ -208,6 +208,23 @@ class AllDebridAdapter implements DebridAdapter {
     return { cached: m.instant === true };
   }
 
+  async checkCachedBatch(infoHashes: string[], { signal }: CallOptions): Promise<Map<string, DebridCachedResult>> {
+    const out = new Map<string, DebridCachedResult>();
+    const magnets = infoHashes.map(infoHashToMagnet);
+    const data = await this.#call<{ magnets?: Array<{ magnet?: string; hash?: string; instant?: boolean }> }>('/v4/magnet/instant', 'Check cache', {
+      signal,
+      method: 'POST',
+      body: form({ magnets: JSON.stringify(magnets) }),
+    });
+    for (const m of data.magnets ?? []) {
+      const hash = (m.hash ?? (m.magnet ? magnetInfoHash(m.magnet) : undefined))?.toLowerCase();
+      if (hash) out.set(hash, { cached: m.instant === true });
+    }
+    // Hashes the provider didn't report are unknown, not definitively uncached.
+    for (const h of infoHashes) if (!out.has(h.toLowerCase())) out.set(h.toLowerCase(), { cached: false, unknown: true });
+    return out;
+  }
+
   async addMagnet(magnet: string, { signal }: CallOptions): Promise<DebridAddResult> {
     const data = await this.#call<{ magnets?: Array<{ id?: number; hash?: string; error?: { code: string; message?: string } }> }>('/v4/magnet/upload', 'Add magnet', {
       signal,
@@ -229,6 +246,19 @@ class AllDebridAdapter implements DebridAdapter {
     });
     const m = data.magnets?.find((x) => String(x.id) === String(id)) ?? data.magnets?.[0];
     return mapAllDebridStatus(m?.status);
+  }
+
+  async listTorrentFiles(remoteId: string, { signal }: CallOptions): Promise<DebridFile[]> {
+    const tree = (await this.#files([Number(remoteId)], signal)).get(Number(remoteId));
+    if (!tree) return [];
+    return flatten(tree).map((f) => ({ id: f.path, name: f.name, path: f.path, size: f.size }));
+  }
+
+  async resolveFileLink(remoteId: string, fileId: string, { signal }: ResolveOptions): Promise<DebridResolvedLink> {
+    const tree = (await this.#files([Number(remoteId)], signal)).get(Number(remoteId));
+    const link = tree && flatten(tree).find((f) => f.path === fileId)?.link;
+    if (!link) throw new ProviderError('not_found', 'File is no longer in your AllDebrid account');
+    return this.#unlock(link, signal);
   }
 
   /** Only called with links taken from the user's own magnets / saved links. */

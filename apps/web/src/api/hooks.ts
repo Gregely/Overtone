@@ -10,10 +10,13 @@ import type {
   AlbumDto,
   ArtistDetailDto,
   ArtistDto,
+  CatalogueArtistDetailDto,
+  CatalogueReleaseDto,
+  CatalogueSearchResultDto,
   ConnectionTestResultDto,
-  DebridAddMagnetResultDto,
+  CreateRetrievalJobRequestDto,
+  CreateRetrievalJobResultDto,
   DebridProviderDto,
-  DebridTorrentStatusDto,
   DiscoverRequestDto,
   DiscoverResponseDto,
   DiscoveryPreferencesDto,
@@ -23,8 +26,11 @@ import type {
   MatchCandidateDto,
   MatchStatus,
   PageDto,
+  PlayCatalogueResultDto,
   ProviderManifestDto,
   ReleaseCandidateDto,
+  RetrievalJobDto,
+  RetrievalJobFilesDto,
   ScanStatusDto,
   SearchResultDto,
   SourceDto,
@@ -307,20 +313,85 @@ export function useDebridProviders() {
   return useQuery({ queryKey: ['debridProviders'], queryFn: () => api.get<DebridProviderDto[]>('/api/debrid/providers'), enabled: admin });
 }
 
-export function useAddMagnet() {
+// ── retrieval jobs ("add to debrid", backend-managed) ───────────────────────
+
+export function useRetrievalJobs() {
   const api = useApi();
-  return useMutation({
-    mutationFn: ({ sourceId, magnet }: { sourceId: string; magnet: string }) => api.post<DebridAddMagnetResultDto>(`/api/debrid/${sourceId}/add-magnet`, { magnet }),
+  const admin = useIsAdmin();
+  return useQuery({
+    queryKey: ['retrievalJobs'],
+    queryFn: () => api.get<RetrievalJobDto[]>('/api/retrieval/jobs'),
+    enabled: admin,
+    // Poll faster while any job is still active, then settle to a slow refresh.
+    refetchInterval: (q) => (q.state.data?.some((j) => j.status === 'queued' || j.status === 'processing') ? 3000 : 60_000),
   });
 }
 
-export function useTorrentStatus(sourceId: string | null, id: string | null) {
+export function useCreateRetrievalJob() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateRetrievalJobRequestDto) => api.post<CreateRetrievalJobResultDto>('/api/retrieval/jobs', body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['retrievalJobs'] }),
+  });
+}
+
+export function useCancelRetrievalJob() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<RetrievalJobDto>(`/api/retrieval/jobs/${id}/cancel`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['retrievalJobs'] }),
+  });
+}
+
+export function useRetryRetrievalJob() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<RetrievalJobDto>(`/api/retrieval/jobs/${id}/retry`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['retrievalJobs'] }),
+  });
+}
+
+export function useRetrievalJobFiles(jobId: string | null) {
   const api = useApi();
   return useQuery({
-    queryKey: ['torrentStatus', sourceId ?? '', id ?? ''],
-    queryFn: () => api.get<DebridTorrentStatusDto>(`/api/debrid/${sourceId}/status/${id}`),
-    enabled: Boolean(sourceId && id),
-    refetchInterval: (q) => (q.state.data?.status === 'processing' ? 3000 : false),
+    queryKey: ['retrievalJobFiles', jobId ?? ''],
+    queryFn: () => api.get<RetrievalJobFilesDto>(`/api/retrieval/jobs/${jobId}/files`),
+    enabled: Boolean(jobId),
+    staleTime: 10_000,
+  });
+}
+
+// ── MusicBrainz catalogue ───────────────────────────────────────────────────
+
+export function useCatalogueSearch(q: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['catalogue', 'search', q],
+    queryFn: () => api.get<CatalogueSearchResultDto>('/api/catalogue/search', { q }),
+    enabled: q.trim().length > 0,
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useCatalogueArtist(mbid: string | undefined) {
+  const api = useApi();
+  return useQuery({ queryKey: ['catalogue', 'artist', mbid ?? ''], queryFn: () => api.get<CatalogueArtistDetailDto>(`/api/catalogue/artists/${mbid}`), enabled: Boolean(mbid) });
+}
+
+export function useCatalogueRelease(mbid: string | undefined) {
+  const api = useApi();
+  return useQuery({ queryKey: ['catalogue', 'release', mbid ?? ''], queryFn: () => api.get<CatalogueReleaseDto>(`/api/catalogue/releases/${mbid}`), enabled: Boolean(mbid) });
+}
+
+export function usePlayCatalogue() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (releaseGroupMbid: string) => api.post<PlayCatalogueResultDto>('/api/catalogue/play', { releaseGroupMbid }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['retrievalJobs'] }),
   });
 }
 

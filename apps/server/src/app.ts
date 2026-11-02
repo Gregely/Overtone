@@ -12,6 +12,7 @@ import { accountRoutes, publicAuthRoutes } from './routes/auth.js';
 import { libraryRoutes } from './routes/library.js';
 import { discoverRoutes } from './routes/discover.js';
 import { debridRoutes } from './routes/debrid.js';
+import { catalogueRoutes } from './routes/catalogue.js';
 import { mediaRoutes } from './routes/media.js';
 import { sourceRoutes, torrentSourceRoutes } from './routes/sources.js';
 import { createServices, type ServiceOverrides, type Services } from './services.js';
@@ -101,6 +102,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<{ app: FastifyIns
     await libraryRoutes(authed, services);
     await discoverRoutes(authed, services);
     await debridRoutes(authed, services);
+    await catalogueRoutes(authed, services);
   });
 
   return { app, services };

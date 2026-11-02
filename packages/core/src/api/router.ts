@@ -17,6 +17,7 @@ import type {
   SourceWriteDto,
   StreamUrlsRequestDto,
   StreamUrlsResponseDto,
+  CreateRetrievalJobRequestDto,
   DiscoverRequestDto,
   DiscoveryPreferencesDto,
   TorrentSourceWriteDto,
@@ -157,18 +158,26 @@ export function createEmbeddedRouter(core: OvertoneCore, opts: EmbeddedRouterOpt
 
   add('POST', '/api/discover', async ({ body }) => api.discover(object<DiscoverRequestDto>(body, ['trackId', 'albumId', 'query', 'type', 'limit']), LOCAL_USER.id));
 
+  // ── MusicBrainz catalogue ────────────────────────────────────────────────
+  add('GET', '/api/catalogue/search', async ({ query }) => api.catalogueSearch(str(query, 'q', 200) ?? ''));
+  add('GET', '/api/catalogue/artists/:mbid', async ({ params }) => api.catalogueArtist(params[0]!));
+  add('GET', '/api/catalogue/releases/:mbid', async ({ params }) => api.catalogueRelease(params[0]!));
+  add('POST', '/api/catalogue/play', async ({ body }) => api.playCatalogue(String((body as { releaseGroupMbid?: unknown })?.releaseGroupMbid ?? ''), LOCAL_USER.id));
+
   // ── discovery preferences ────────────────────────────────────────────────
   const PREF_KEYS = ['preferredFormat', 'minBitrateKbps', 'preferredProvider', 'rememberLastProvider', 'prioritizeCached', 'hideUncached', 'searchScope'];
   add('GET', '/api/preferences', async () => api.getPreferences(LOCAL_USER.id));
   add('PUT', '/api/preferences', async ({ body }) => api.setPreferences(LOCAL_USER.id, object<DiscoveryPreferencesDto>(body, PREF_KEYS)));
 
-  // ── debrid retrieval ("add to debrid") ──────────────────────────────────
+  // ── debrid retrieval jobs ("add to debrid") ──────────────────────────────
   add('GET', '/api/debrid/providers', async () => api.listDebridProviders());
-  add('POST', '/api/debrid/:sourceId/add-magnet', async ({ params, body }) => {
-    const b = object<{ magnet: string }>(body, ['magnet'], ['magnet']);
-    return api.addMagnet(params[0]!, String(b.magnet));
-  });
-  add('GET', '/api/debrid/:sourceId/status/:id', async ({ params }) => api.torrentStatus(params[0]!, params[1]!));
+  add('GET', '/api/retrieval/jobs', async () => api.listRetrievalJobs(LOCAL_USER.id));
+  add('GET', '/api/retrieval/jobs/:id', async ({ params }) => api.getRetrievalJob(LOCAL_USER.id, params[0]!));
+  add('GET', '/api/retrieval/jobs/:id/files', async ({ params }) => api.retrievalJobFiles(LOCAL_USER.id, params[0]!, view));
+  add('POST', '/api/retrieval/jobs', async ({ body }) =>
+    api.createRetrievalJob(LOCAL_USER.id, object<CreateRetrievalJobRequestDto>(body, ['providerId', 'magnet', 'title', 'artist', 'album', 'year', 'size'], ['providerId', 'magnet'])), 201);
+  add('POST', '/api/retrieval/jobs/:id/cancel', async ({ params }) => api.cancelRetrievalJob(LOCAL_USER.id, params[0]!));
+  add('POST', '/api/retrieval/jobs/:id/retry', async ({ params }) => api.retryRetrievalJob(LOCAL_USER.id, params[0]!));
 
   // ── standalone only: Settings › Library ──────────────────────────────────
   add('GET', '/api/library/info', async () => libraryInfo(core, opts.databaseBytes));

@@ -9,12 +9,15 @@
  */
 import type {
   AlbumDetailDto,
+  CatalogueArtistDetailDto,
+  CatalogueReleaseDto,
+  CatalogueSearchResultDto,
   ConnectionTestResultDto,
+  CreateRetrievalJobRequestDto,
+  CreateRetrievalJobResultDto,
   DeviceFlowPollDto,
   DeviceFlowStartDto,
-  DebridAddMagnetResultDto,
   DebridProviderDto,
-  DebridTorrentStatusDto,
   DiscoverRequestDto,
   DiscoverResponseDto,
   DiscoverScope,
@@ -23,7 +26,11 @@ import type {
   LibraryFileDto,
   MatchCandidateDto,
   MatchStatus,
+  PlayCatalogueResultDto,
   ReleaseCandidateDto,
+  RetrievalJobDto,
+  RetrievalJobFileDto,
+  RetrievalJobFilesDto,
   ScanStatusDto,
   SourceDto,
   SourceWriteDto,
@@ -33,6 +40,7 @@ import type {
   TrackDto,
 } from '@overtone/shared';
 import { ApiError } from '../errors.js';
+import { isAudioFile } from '@overtone/shared';
 import type { AlbumSort, DiscoveryMetadata, LibraryRepo, PlayableSource, SourceFileRow, ViewContext } from '../library/repo.js';
 import { toCandidateDto } from '../library/repo.js';
 import type { LibraryScanner, MatchWorker } from '../library/scanner.js';
@@ -45,7 +53,10 @@ import type { FileTags } from '../providers/types.js';
 import type { TorrentSourceManager } from '../discovery/manager.js';
 import type { DiscoveryService } from '../discovery/service.js';
 import type { DiscoveryTarget } from '../discovery/query-builder.js';
+import { bestCachedCandidate, cachedProvider, magnetOf } from '../discovery/source-matcher.js';
 import type { DebridService } from '../providers/debrid/service.js';
+import type { RetrievalService } from '../retrieval/service.js';
+import { RETRIEVAL_SOURCE_ID } from '../retrieval/service.js';
 import type { PreferencesService } from '../preferences.js';
 import type { DeviceLoginService } from '../sources/device-login.js';
 import type { SourceManager } from '../sources/manager.js';
@@ -56,6 +67,7 @@ export interface CoreApiDeps {
   torrentSources: TorrentSourceManager;
   discovery: DiscoveryService;
   debrid: DebridService;
+  retrieval: RetrievalService;
   preferences: PreferencesService;
   deviceLogins: DeviceLoginService;
   library: LibraryRepo;
@@ -240,7 +252,11 @@ export class CoreApi {
   }
 
   async listSources(): Promise<SourceDto[]> {
-    return Promise.all((await this.s.sources.list()).map((r) => this.s.sources.toDto(r)));
+    return Promise.all(
+      (await this.s.sources.list())
+        .filter((r) => !this.s.registry.get(r.provider_id)?.manifest.hidden)
+        .map((r) => this.s.sources.toDto(r)),
+    );
   }
 
   async source(id: string): Promise<SourceDto> {
@@ -252,6 +268,7 @@ export class CoreApi {
   }
 
   async createSource(body: SourceWriteDto, userId: number): Promise<SourceDto> {
+    if (this.s.registry.get(body.providerId ?? '')?.manifest.hidden) throw ApiError.validation({ providerId: 'Unknown provider' });
     const device = this.#loginSecrets(body.deviceLogin, userId, body.providerId!, false);
     const row = await this.s.sources.create(body, device);
     if (body.deviceLogin) this.#loginSecrets(body.deviceLogin, userId, row.provider_id, true);
@@ -260,13 +277,16 @@ export class CoreApi {
 
   async updateSource(id: string, body: SourceWriteDto, userId: number): Promise<SourceDto> {
     const current = await this.s.sources.require(id);
+    if (this.s.registry.get(current.provider_id)?.manifest.hidden) throw ApiError.badRequest('This source is managed by Overtone');
     const device = this.#loginSecrets(body.deviceLogin, userId, current.provider_id, false);
     const row = await this.s.sources.update(id, body, device);
     if (body.deviceLogin) this.#loginSecrets(body.deviceLogin, userId, row.provider_id, true);
     return this.s.sources.toDto(row);
   }
 
-  deleteSource(id: string): Promise<void> {
+  async deleteSource(id: string): Promise<void> {
+    const row = await this.s.sources.require(id);
+    if (this.s.registry.get(row.provider_id)?.manifest.hidden) throw ApiError.badRequest('This source is managed by Overtone');
     return this.s.sources.delete(id);
   }
 
@@ -351,18 +371,167 @@ export class CoreApi {
     throw ApiError.badRequest('Provide a trackId, albumId or query');
   }
 
-  // ── Debrid retrieval ("add to debrid") ──────────────────────────────────
+  // ── MusicBrainz catalogue ─────────────────────────────────────────────────
+
+  /** Search the MusicBrainz catalogue (independent of library/torrent availability). */
+  async catalogueSearch(q: string): Promise<CatalogueSearchResultDto> {
+    if (!q.trim()) return { artists: [], releases: [], recordings: [] };
+    const [artists, releases, recordings] = await Promise.all([
+      this.s.mb.searchArtists(q.trim(), 8),
+      this.s.mb.searchReleaseGroups(q.trim(), 12),
+      this.s.mb.searchRecordings(q.trim(), 12),
+    ]);
+    return {
+      artists: artists.map((a) => ({ mbid: a.id, name: a.name, disambiguation: a.disambiguation })),
+      releases: releases.map((r) => ({
+        mbid: r.id,
+        title: r.title,
+        artistCredit: r.credit.text,
+        primaryType: r.primaryType,
+        year: r.firstReleaseDate ? yearOf(r.firstReleaseDate) : null,
+      })),
+      recordings: recordings.map((r) => ({ mbid: r.id, title: r.title, artistCredit: r.credit.text, durationMs: r.lengthMs })),
+    };
+  }
+
+  async catalogueArtist(mbid: string): Promise<CatalogueArtistDetailDto> {
+    const a = await this.s.mb.getArtist(mbid);
+    if (!a) throw ApiError.notFound('Artist');
+    return {
+      artist: { mbid: a.id, name: a.name, disambiguation: a.disambiguation },
+      releaseGroups: a.releaseGroups.map((r) => ({
+        mbid: r.id,
+        title: r.title,
+        artistCredit: r.credit.text,
+        primaryType: r.primaryType,
+        year: r.firstReleaseDate ? yearOf(r.firstReleaseDate) : null,
+      })),
+    };
+  }
+
+  async catalogueRelease(mbid: string): Promise<CatalogueReleaseDto> {
+    const r = await this.s.mb.getReleaseGroup(mbid);
+    if (!r) throw ApiError.notFound('Album');
+    const { releaseGroup, release } = r;
+    const year = releaseGroup.firstReleaseDate ? yearOf(releaseGroup.firstReleaseDate) : release.date ? yearOf(release.date) : null;
+    return {
+      mbid: releaseGroup.id,
+      title: releaseGroup.title,
+      artistCredit: releaseGroup.credit.text,
+      year,
+      date: release.date,
+      trackCount: release.tracks.length,
+      tracks: release.tracks.map((t) => ({
+        title: t.title,
+        artistCredit: t.recording.credit.text || releaseGroup.credit.text,
+        discNo: t.discNo,
+        trackNo: t.trackNo,
+        durationMs: t.lengthMs,
+        recordingMbid: t.recording.id || null,
+      })),
+      coverUrl: `https://coverartarchive.org/release-group/${releaseGroup.id}/front-500`,
+    };
+  }
+
+  /** Pressing Play: discover, match, select a cached release and start retrieval. */
+  async playCatalogue(releaseGroupMbid: string, userId: number): Promise<PlayCatalogueResultDto> {
+    const r = await this.s.mb.getReleaseGroup(releaseGroupMbid);
+    if (!r) throw ApiError.notFound('Album');
+    const { releaseGroup } = r;
+
+    const target: DiscoveryTarget = {
+      scope: 'album',
+      title: releaseGroup.title,
+      artist: releaseGroup.credit.text,
+      album: releaseGroup.title,
+      ...(releaseGroup.firstReleaseDate && yearOf(releaseGroup.firstReleaseDate) != null
+        ? { year: yearOf(releaseGroup.firstReleaseDate)! }
+        : {}),
+    };
+    const prefs = await this.s.preferences.get(userId);
+    const res = await this.s.discovery.discover(target, {
+      preferredFormat: prefs.preferredFormat === 'any' ? undefined : prefs.preferredFormat,
+      minBitrateKbps: prefs.minBitrateKbps ?? undefined,
+      prioritizeCached: true,
+    });
+
+    const best = bestCachedCandidate(res.results, 'probable');
+    const magnet = best ? magnetOf(best.result) : null;
+    const provider = best ? cachedProvider(best.result) : null;
+    if (best && magnet && provider) {
+      const created = await this.s.retrieval.create(userId, {
+        providerId: provider.sourceId,
+        magnet,
+        title: best.result.title,
+        ...(best.result.artist ? { artist: best.result.artist } : {}),
+        ...(best.result.album ? { album: best.result.album } : {}),
+        ...(best.result.year != null ? { year: best.result.year } : {}),
+        ...(best.result.size != null ? { size: best.result.size } : {}),
+      });
+      return { status: 'retrieving', job: created.job, selected: best.result };
+    }
+    if (res.results.length) return { status: 'no_cached_source', candidates: res.results };
+    return { status: 'no_source' };
+  }
+
+  // ── Debrid retrieval jobs ("add to debrid") ──────────────────────────────
 
   listDebridProviders(): Promise<DebridProviderDto[]> {
     return this.s.debrid.listProviders();
   }
 
-  async addMagnet(sourceId: string, magnet: string): Promise<DebridAddMagnetResultDto> {
-    return this.s.debrid.addMagnet(sourceId, magnet);
+  listRetrievalJobs(userId: number): Promise<RetrievalJobDto[]> {
+    return this.s.retrieval.list(userId);
   }
 
-  async torrentStatus(sourceId: string, id: string): Promise<DebridTorrentStatusDto> {
-    return this.s.debrid.getStatus(sourceId, id);
+  getRetrievalJob(userId: number, id: string): Promise<RetrievalJobDto> {
+    return this.s.retrieval.get(userId, id).then((job) => {
+      if (!job) throw ApiError.notFound('Retrieval job');
+      return job;
+    });
+  }
+
+  createRetrievalJob(userId: number, body: CreateRetrievalJobRequestDto): Promise<CreateRetrievalJobResultDto> {
+    return this.s.retrieval.create(userId, body);
+  }
+
+  cancelRetrievalJob(userId: number, id: string): Promise<RetrievalJobDto> {
+    return this.s.retrieval.cancel(userId, id);
+  }
+
+  retryRetrievalJob(userId: number, id: string): Promise<RetrievalJobDto> {
+    return this.s.retrieval.retry(userId, id);
+  }
+
+  /**
+   * Files of a completed retrieval job, plus their library tracks (for the
+   * player). Imports the job's audio files on first request if not yet done.
+   */
+  async retrievalJobFiles(userId: number, id: string, view: ViewContext): Promise<RetrievalJobFilesDto> {
+    const job = await this.s.retrieval.get(userId, id);
+    if (!job) throw ApiError.notFound('Retrieval job');
+    if (job.status !== 'complete') throw ApiError.badRequest('This job has not finished retrieving yet');
+
+    if (!(await this.s.retrieval.hasImportedFiles(id))) {
+      await this.s.retrieval.ensureSource();
+      this.s.scanner.enqueue(RETRIEVAL_SOURCE_ID);
+      await this.s.scanner.idle();
+      await this.s.retrieval.markFilesProcessed(id);
+    }
+
+    const imported = await this.s.retrieval.listImportedFiles(id);
+    const trackIds = imported.map((f) => f.trackId).filter((t): t is number => t != null);
+    const tracks = await this.s.library.getTracks(trackIds, view);
+    const files: RetrievalJobFileDto[] = imported.map((f) => ({
+      id: f.fileId,
+      name: f.name,
+      path: f.path,
+      size: f.size,
+      mime: f.mime,
+      playable: f.trackId != null && isAudioFile(f.name),
+      trackId: f.trackId,
+    }));
+    return { jobId: id, imported: imported.length > 0, files, tracks };
   }
 
   // ── Discovery preferences ─────────────────────────────────────────────────
@@ -399,6 +568,11 @@ export class CoreApi {
 
 function defined<T extends object>(o: T): T {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
+}
+
+function yearOf(date: string): number | null {
+  const n = Number(date.slice(0, 4));
+  return Number.isInteger(n) && n >= 1000 ? n : null;
 }
 
 function toTarget(m: DiscoveryMetadata, scope: DiscoverScope): DiscoveryTarget {

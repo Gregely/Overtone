@@ -114,22 +114,22 @@ describe('TorrentSourceManager', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('tests a Jackett source against its Torznab endpoint and discovers indexers', async () => {
-    const mock = mockHttp().on('GET', /torznab\/api/, (req) =>
-      req.url.searchParams.get('t') === 'search'
-        ? new Response('<?xml version="1.0"?><rss><channel><title>Jackett</title></channel></rss>', { headers: { 'content-type': 'application/xml' } })
-        : new Response('<?xml version="1.0"?><indexers><indexer id="idx1" title="One"/></indexers>', { headers: { 'content-type': 'application/xml' } }),
+  it('tests a Jackett source via its t=indexers endpoint and discovers indexers', async () => {
+    const mock = mockHttp().on('GET', /torznab\/api/, () =>
+      new Response('<?xml version="1.0"?><indexers><indexer id="idx1" title="One"/></indexers>', { headers: { 'content-type': 'application/xml' } }),
     );
     const { manager } = await makeManager({ fetch: mock.fetch });
 
     const result = await manager.test(undefined, { kind: 'jackett', url: 'http://127.0.0.1:9117', apiKey: 'jackett-key' });
 
     expect(result.ok).toBe(true);
+    expect(result.message).toBe('Connected · 1 indexer');
     expect(result.indexers).toEqual([{ id: 'idx1', name: 'One', categories: [], enabled: true }]);
-    // Both the probe search and the indexer list hit the corrected Torznab endpoint.
-    expect(mock.calls.every((c) => c.url.pathname === '/api/v2.0/indexers/all/results/torznab/api')).toBe(true);
-    expect(mock.calls.every((c) => c.url.searchParams.get('apikey') === 'jackett-key')).toBe(true);
-    expect(mock.calls.map((c) => c.url.searchParams.get('t')).sort()).toEqual(['indexers', 'search']);
+    // A single lightweight t=indexers call — no search probe across all indexers.
+    expect(mock.calls).toHaveLength(1);
+    expect(mock.calls[0]!.url.pathname).toBe('/api/v2.0/indexers/all/results/torznab/api');
+    expect(mock.calls[0]!.url.searchParams.get('t')).toBe('indexers');
+    expect(mock.calls[0]!.url.searchParams.get('apikey')).toBe('jackett-key');
   });
 
   it('reports an invalid Jackett key as auth', async () => {

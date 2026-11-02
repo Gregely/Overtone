@@ -11,7 +11,7 @@ import { createDefaultTorrentRegistry, type TorrentIndexerRegistry } from './dis
 import { DiscoveryService } from './discovery/service.js';
 import { LibraryRepo } from './library/repo.js';
 import { LibraryScanner, MatchWorker } from './library/scanner.js';
-import { silentLogger, type Logger } from './logging.js';
+import { createRedactingLogger, silentLogger, type Logger } from './logging.js';
 import { CoverArtService } from './metadata/coverart/service.js';
 import { Matcher } from './metadata/matcher/matcher.js';
 import { MusicBrainzClient, mbUserAgent } from './metadata/musicbrainz/client.js';
@@ -22,6 +22,13 @@ import type { ProviderRegistry } from './providers/registry.js';
 import { DebridService } from './providers/debrid/service.js';
 import { PreferencesService } from './preferences.js';
 import { ResolveCache } from './providers/resolve-cache.js';
+import { createProviderFetch } from './providers/fetch.js';
+import { createDefaultScrapers } from './discovery/scrapers/defaults.js';
+import type { Scraper } from './discovery/scrapers/types.js';
+import type { IndexerContext } from './discovery/types.js';
+import { RetrievalService } from './retrieval/service.js';
+import { RETRIEVAL_SOURCE_ID } from './retrieval/service.js';
+import { createRetrievalPlugin } from './retrieval/source.js';
 import { DeviceLoginService } from './sources/device-login.js';
 import { SourceManager } from './sources/manager.js';
 
@@ -35,6 +42,10 @@ export interface CoreOptions {
   registry?: ProviderRegistry;
   /** Defaults to the built-in torrent indexer protocols (Torznab). */
   torrentRegistry?: TorrentIndexerRegistry;
+  /** Native scrapers searched alongside configured torrent sources. */
+  scrapers?: readonly Scraper[];
+  /** 1337x base URL override (a mirror when the default is unreachable). */
+  x1337BaseUrl?: string;
   builtins?: BuiltinOptions;
   /** Outbound HTTP for providers, MusicBrainz, artwork and tag probing. */
   fetch?: HttpFetch;
@@ -68,6 +79,7 @@ export interface OvertoneCore {
   deviceLogins: DeviceLoginService;
   library: LibraryRepo;
   resolver: ResolveCache;
+  retrieval: RetrievalService;
   mb: MusicBrainzApi;
   matcher: Matcher;
   scanner: LibraryScanner;
@@ -120,7 +132,16 @@ export function createCore(o: CoreOptions): OvertoneCore {
   });
   const debrid = new DebridService({ sources, registry, logger, clock });
   const preferences = new PreferencesService(o.db);
-  const discovery = new DiscoveryService({ sources: torrentSources, logger, clock, debrid });
+  const retrieval = new RetrievalService({ db: o.db, debrid, clock, logger: logger.child({ component: 'retrieval' }) });
+  // The synthetic "retrieval" source backs playback of retrieved content.
+  registry.register(createRetrievalPlugin(retrieval, debrid));
+  const scraperLogger = createRedactingLogger(logger.child({ component: 'scraper' }), () => []);
+  const scraperCtx: IndexerContext = {
+    logger: scraperLogger,
+    fetch: createProviderFetch({ userAgent, logger: scraperLogger, ...(o.fetch ? { fetch: o.fetch } : {}) }),
+  };
+  const scrapers = o.scrapers ?? createDefaultScrapers(scraperCtx, { ...(o.x1337BaseUrl ? { x1337BaseUrl: o.x1337BaseUrl } : {}) });
+  const discovery = new DiscoveryService({ sources: torrentSources, logger, clock, debrid, scrapers });
   const deviceLogins = new DeviceLoginService({ registry, logger, userAgent, now, ...fetchOpt });
   const library = new LibraryRepo(o.db, now);
   const resolver = new ResolveCache({ now });
@@ -159,7 +180,16 @@ export function createCore(o: CoreOptions): OvertoneCore {
     ...fetchOpt,
   });
   covers = new CoverArtService({ blobs: o.blobs, library, sources, logger, userAgent, now, ...(o.coverArtUrl ? { baseUrl: o.coverArtUrl } : {}), ...fetchOpt });
-  const api = new CoreApi({ registry, sources, torrentSources, discovery, debrid, preferences, deviceLogins, library, mb, matcher, scanner, matchWorker, covers });
+  const api = new CoreApi({ registry, sources, torrentSources, discovery, debrid, preferences, deviceLogins, library, retrieval, mb, matcher, scanner, matchWorker, covers });
+
+  /** Ensure the synthetic retrieval source row exists (idempotent). */
+  const ensureRetrievalSource = (): Promise<void> => retrieval.ensureSource();
+  // When a job completes, import its files through the regular scanner.
+  retrieval.onComplete = (jobId) => {
+    void ensureRetrievalSource()
+      .then(() => scanner.enqueue(RETRIEVAL_SOURCE_ID))
+      .catch((err) => logger.warn({ error: (err as Error).message, jobId }, 'could not import retrieval job files'));
+  };
 
   // Config changes invalidate cached stream links for that source.
   sources.onChange((e) => resolver.invalidate(e.sourceId));
@@ -176,6 +206,7 @@ export function createCore(o: CoreOptions): OvertoneCore {
     deviceLogins,
     library,
     resolver,
+    retrieval,
     mb,
     matcher,
     scanner,
@@ -192,21 +223,25 @@ export function createCore(o: CoreOptions): OvertoneCore {
     async start(opts = {}) {
       if (started) return;
       started = true;
+      await ensureRetrievalSource();
       matchWorker.resume();
       await scanner.start(opts.intervalMinutes ?? 0, { scanAll: opts.scanAll ?? false });
       matchWorker.kick();
+      retrieval.start();
     },
     async pause() {
       started = false;
       matchWorker.stop();
       await scanner.stop();
       await matchWorker.idle();
+      retrieval.stop();
     },
     async close() {
       started = false;
       matchWorker.stop();
       await scanner.stop();
       await matchWorker.idle().catch(() => undefined);
+      retrieval.stop();
       await sources.disposeAll();
       discovery.close();
       await o.db.close();

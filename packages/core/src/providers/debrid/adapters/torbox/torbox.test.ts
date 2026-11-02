@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { json, mockHttp } from '../../../../testing/mock-http.js';
 import { collect, createTestContext } from '../../../../testing/provider-context.js';
-import { createDebridPlugin } from '../../index.js';
+import { createDebridPlugin, type DebridSourceProvider } from '../../index.js';
 import { createTorBoxAdapter } from './index.js';
 
 // Fixtures follow the TorBox Postman collection examples (api-docs.torbox.app); values are fake.
@@ -33,20 +33,27 @@ function setup(opts: { retries?: boolean } = {}) {
     .on('GET', `${API}/torrents/requestdl`, (req) => ok(`https://tb-cdn.example/dld/${req.url.searchParams.get('torrent_id')}-${req.url.searchParams.get('file_id')}?token=cdn`))
     .on('GET', `${API}/usenet/requestdl`, ok('https://tb-cdn.example/dld/u'));
   const ctx = createTestContext({ fetch: http.fetch, ...(opts.retries ? { retries: true } : {}) });
-  const provider = createDebridPlugin(createTorBoxAdapter({ now: () => NOW })).create({ apiKey: 'tb-key', probeTags: false }, ctx);
+  const provider = createDebridPlugin(createTorBoxAdapter({ now: () => NOW })).create({ apiKey: 'tb-key', probeTags: false }, ctx) as unknown as DebridSourceProvider;
   return { http, ctx, provider };
 }
 
 describe('TorBox adapter', () => {
-  it('lists audio from finished torrents, usenet and web downloads', async () => {
+  it('lists files from finished torrents, usenet and web downloads (adapter)', async () => {
     const { provider, http } = setup();
-    const files = await collect(provider.listLibrary({ signal }));
+    const files = await collect(provider.adapter.listFiles({ signal }));
     expect(files.map((f) => [f.id, f.name, f.path])).toEqual([
       ['t:11:0', '01 - One.flac', 'Artist - Album (2003)/01 - One.flac'],
+      ['t:11:1', 'folder.jpg', 'Artist - Album (2003)/folder.jpg'],
       ['u:21:3', 'track.mp3', 'Usenet Album/track.mp3'],
     ]);
     expect(http.to(`${API}/torrents/mylist`)[0]!.url.searchParams.get('bypass_cache')).toBe('true');
     expect(http.calls.every((c) => c.method === 'GET')).toBe(true);
+  });
+
+  it('does not enumerate the account into the library (retrieval-only)', async () => {
+    const { provider, http } = setup();
+    expect(await collect(provider.listLibrary({ signal }))).toEqual([]);
+    expect(http.calls).toHaveLength(0);
   });
 
   it('requests a link for the exact item + file, valid for 3 hours, proxied', async () => {
@@ -85,7 +92,7 @@ describe('TorBox adapter', () => {
     const { provider, http } = setup();
     http.on('*', (u) => u.href.startsWith(API), fail('BAD_TOKEN', 403));
     expect(await provider.testConnection!({ signal })).toMatchObject({ ok: false, message: expect.stringContaining('rejected the API key') });
-    await expect(collect(provider.listLibrary({ signal }))).rejects.toMatchObject({ code: 'auth' });
+    await expect(collect(provider.adapter.listFiles({ signal }))).rejects.toMatchObject({ code: 'auth' });
   });
 
   it('maps a removed item to not_found', async () => {
@@ -97,7 +104,7 @@ describe('TorBox adapter', () => {
   it('backs off on 429 then succeeds; persistent 429 → rate_limited', async () => {
     const a = setup({ retries: true });
     a.http.on('GET', `${API}/torrents/mylist`, json({}, 429, { 'retry-after': '4' }), 1);
-    expect(await collect(a.provider.listLibrary({ signal }))).toHaveLength(2);
+    expect(await collect(a.provider.adapter.listFiles({ signal }))).toHaveLength(3);
     expect(a.ctx.delays).toEqual([4000]);
     const b = setup({ retries: true });
     b.http.on('GET', `${API}/user/me`, json({}, 429));
@@ -107,13 +114,13 @@ describe('TorBox adapter', () => {
   it('maps network failures to unavailable', async () => {
     const { provider, http } = setup();
     http.fail('GET', (u) => u.href.startsWith(API));
-    await expect(collect(provider.listLibrary({ signal }))).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(collect(provider.adapter.listFiles({ signal }))).rejects.toMatchObject({ code: 'unavailable' });
   });
 
   it('handles an empty account', async () => {
     const { provider, http } = setup();
     for (const k of ['torrents', 'usenet', 'webdl']) http.on('GET', `${API}/${k}/mylist`, ok([]));
-    expect(await collect(provider.listLibrary({ signal }))).toEqual([]);
+    expect(await collect(provider.adapter.listFiles({ signal }))).toEqual([]);
   });
 
   it('runs the device-code login', async () => {
@@ -158,5 +165,23 @@ describe('TorBox adapter', () => {
     expect(await adapter.addMagnet!('magnet:?xt=urn:btih:aaaa', { signal })).toEqual({ id: '33', status: 'queued' });
     expect(JSON.parse(http.to(`${API}/torrents/createtorrent`)[0]!.body!)).toEqual({ magnet: 'magnet:?xt=urn:btih:aaaa' });
     expect(await adapter.getStatus!('33', { signal })).toEqual({ status: 'finished' });
+  });
+
+  it('lists and resolves the files of one submitted torrent (job-scoped)', async () => {
+    const http = mockHttp()
+      .on('GET', `${API}/torrents/mylist`, ok([torrent]))
+      .on('GET', `${API}/torrents/requestdl`, (req) => ok(`https://tb-cdn.example/dld/${req.url.searchParams.get('file_id')}`));
+    const adapter = createTorBoxAdapter({ now: () => NOW }).create({ apiKey: 'tb-key' }, createTestContext({ fetch: http.fetch }));
+
+    const files = await adapter.listTorrentFiles!('11', { signal });
+    expect(files.map((f) => [f.id, f.path, f.size])).toEqual([
+      ['0', 'Artist - Album (2003)/01 - One.flac', 100],
+      ['1', 'Artist - Album (2003)/folder.jpg', 5],
+    ]);
+
+    const link = await adapter.resolveFileLink!('11', '0', { signal });
+    expect(link.url).toBe('https://tb-cdn.example/dld/0');
+    expect(Object.fromEntries(http.to(`${API}/torrents/requestdl`)[0]!.url.searchParams)).toEqual({ token: 'tb-key', torrent_id: '11', file_id: '0' });
+    expect(await adapter.listTorrentFiles!('999', { signal })).toEqual([]); // unknown torrent → empty
   });
 });

@@ -104,11 +104,30 @@ export interface DebridAdapter {
   /** Whether this magnet/infohash is already cached. Optional (not all providers expose it). */
   checkCached?(ref: DebridTorrentRef, opts: CallOptions): Promise<DebridCachedResult>;
 
+  /** Batch cache check for multiple info hashes. Optional — providers without it fall back to per-hash checks. */
+  checkCachedBatch?(infoHashes: string[], opts: CallOptions): Promise<Map<string, DebridCachedResult>>;
+
   /** Submit a user-selected magnet; returns an id for {@link getStatus}. Optional. */
   addMagnet?(magnet: string, opts: CallOptions): Promise<DebridAddResult>;
 
   /** Poll a submitted torrent's processing status. Optional. */
   getStatus?(id: string, opts: CallOptions): Promise<DebridTorrentStatus>;
+
+  /**
+   * Job-scoped file listing: the files of ONE submitted torrent (by provider
+   * id), without enumerating the whole account. Optional — the retrieval
+   * streaming increment uses this instead of `listFiles`. File `id`s are
+   * stable within the torrent and are passed to {@link resolveFileLink}.
+   */
+  listTorrentFiles?(remoteId: string, opts: CallOptions): Promise<DebridFile[]>;
+
+  /**
+   * Job-scoped stream resolution: turn one file (by its `id` from
+   * {@link listTorrentFiles}) within a submitted torrent into a direct link.
+   * Optional — the retrieval streaming increment uses this instead of
+   * `resolveLink`.
+   */
+  resolveFileLink?(remoteId: string, fileId: string, opts: ResolveOptions): Promise<DebridResolvedLink>;
 }
 
 export interface DebridFile {

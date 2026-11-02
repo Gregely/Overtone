@@ -85,6 +85,7 @@ const { app, services } = await buildApp({
     trustProxy: false,
     version: 'e2e',
     premiumizeClientId: null,
+    x1337BaseUrl: null,
   },
   mb: new FakeMusicBrainz([albumOne]),
   fetch: fakeFetch,

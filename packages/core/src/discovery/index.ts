@@ -8,3 +8,5 @@ export * from './aggregators.js';
 export * from './query-builder.js';
 export * from './ranking.js';
 export * from './service.js';
+export * from './source-matcher.js';
+export * from './scrapers/index.js';

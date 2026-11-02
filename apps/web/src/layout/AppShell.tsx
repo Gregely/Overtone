@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router';
 import { busy, useScanStatus } from '../api/hooks';
-import { useApiState } from '../app/context';
+import { useApiState, useIsAdmin } from '../app/context';
 import { usePlayer, usePlayerState } from '../player/react';
 import { Icon } from '../ui/Icon';
 import { PlayerBar } from './PlayerBar';
 
 function NavLinks() {
+  const admin = useIsAdmin();
   return (
     <div className="nav">
       <NavLink to="/" end>
@@ -18,6 +19,11 @@ function NavLinks() {
       <NavLink to="/search">
         <Icon name="search" /> <span>Search</span>
       </NavLink>
+      {admin && (
+        <NavLink to="/downloads">
+          <Icon name="download" /> <span>Downloads</span>
+        </NavLink>
+      )}
       <NavLink to="/settings">
         <Icon name="settings" /> <span>Settings</span>
       </NavLink>

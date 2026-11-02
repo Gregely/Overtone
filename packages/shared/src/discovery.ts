@@ -154,22 +154,87 @@ export interface DebridProviderDto {
   retrieval: boolean;
 }
 
-export interface DebridAddMagnetRequestDto {
-  magnet: string;
-}
+/** Lifecycle of a persistent, backend-managed retrieval job. */
+export type RetrievalJobStatus = 'queued' | 'processing' | 'complete' | 'failed' | 'canceled';
 
-export interface DebridAddMagnetResultDto {
-  /** Provider torrent id, for status polling. */
+/** One debrid retrieval job (persisted server-side and resumed after restart). */
+export interface RetrievalJobDto {
   id: string;
-  status: string;
-  /** True when the magnet was already cached and finished instantly. */
-  instant?: boolean;
+  /** The debrid source id this was submitted to. */
+  providerId: string;
+  /** Provider display name, kept even if the source is later removed. */
+  providerName: string;
+  status: RetrievalJobStatus;
+  /** Lowercase hex info hash, when known (always present for valid magnets). */
+  infohash: string | null;
+  /** Discovery metadata, for the activity view. */
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  year: number | null;
+  size: number | null;
+  /** 0..1 progress when the provider reports it; null otherwise. */
+  progress: number | null;
+  /** Last error message (failed jobs). */
+  error: string | null;
+  /** Whether the job's files have been processed into the library (next increment). */
+  filesProcessed: boolean;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
 }
 
-export type DebridTorrentStatusDto =
-  | { status: 'processing'; progress: number | null }
-  | { status: 'finished' }
-  | { status: 'error'; message: string };
+/** POST /api/retrieval/jobs — create (or reuse) a retrieval job for a magnet. */
+export interface CreateRetrievalJobRequestDto {
+  /** Debrid source id. */
+  providerId: string;
+  magnet: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  year?: number;
+  size?: number;
+}
+
+export interface CreateRetrievalJobResultDto {
+  job: RetrievalJobDto;
+  /** True when this re-used an existing active job for the same provider + infohash. */
+  duplicate: boolean;
+}
+
+// ── Retrieval job files (playback) ──────────────────────────────────────────
+
+/** One file belonging to a completed retrieval job. */
+export interface RetrievalJobFileDto {
+  /** The file id within the job (used for resolution). */
+  id: string;
+  name: string;
+  path: string;
+  size: number;
+  mime: string | null;
+  /** Whether this is a playable audio file. */
+  playable: boolean;
+  /** The library track id, when the file has been imported and matched. */
+  trackId: number | null;
+}
+
+/** GET /api/retrieval/jobs/:id/files — the files of one job, plus their library tracks. */
+export interface RetrievalJobFilesDto {
+  jobId: string;
+  /** True once the job's audio files have been imported into the library. */
+  imported: boolean;
+  files: RetrievalJobFileDto[];
+  /** The library tracks for the playable files, in album order (for the player). */
+  tracks: import('./api.js').TrackDto[];
+}
+
+// ── Automatic playback (Play on a catalogue album) ──────────────────────────
+
+/** Result of pressing Play on a catalogue album: automatic source selection + retrieval. */
+export type PlayCatalogueResultDto =
+  | { status: 'retrieving'; job: RetrievalJobDto; selected: DiscoverResultDto }
+  | { status: 'no_cached_source'; candidates: DiscoverResultDto[] }
+  | { status: 'no_source' };
 
 // ── Discovery preferences ───────────────────────────────────────────────────
 

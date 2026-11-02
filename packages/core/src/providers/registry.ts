@@ -37,24 +37,26 @@ export class ProviderRegistry {
     return [...this.#plugins.values()];
   }
 
-  /** Client-facing catalog (GET /api/providers). Strips hidden fields. */
+  /** Client-facing catalog (GET /api/providers). Strips hidden fields and providers. */
   toDtos(): ProviderManifestDto[] {
-    return this.list().map(({ manifest: m }) => ({
-      id: m.id,
-      name: m.name,
-      description: m.description,
-      category: m.category,
-      configSchema: {
-        fields: m.configSchema.fields.filter((f) => !f.hidden),
-        ...(m.configSchema.deviceLogin ? { deviceLogin: m.configSchema.deviceLogin } : {}),
-      },
-      capabilities: {
-        watch: Boolean(m.capabilities?.watch),
-        testConnection: Boolean(m.capabilities?.testConnection),
-        deviceFlow: Boolean(m.deviceFlow),
-        redirectable: Boolean(m.capabilities?.redirectable),
-        retrieval: Boolean(m.capabilities?.retrieval),
-      },
-    }));
+    return this.list()
+      .filter(({ manifest: m }) => !m.hidden)
+      .map(({ manifest: m }) => ({
+        id: m.id,
+        name: m.name,
+        description: m.description,
+        category: m.category,
+        configSchema: {
+          fields: m.configSchema.fields.filter((f) => !f.hidden),
+          ...(m.configSchema.deviceLogin ? { deviceLogin: m.configSchema.deviceLogin } : {}),
+        },
+        capabilities: {
+          watch: Boolean(m.capabilities?.watch),
+          testConnection: Boolean(m.capabilities?.testConnection),
+          deviceFlow: Boolean(m.deviceFlow),
+          redirectable: Boolean(m.capabilities?.redirectable),
+          retrieval: Boolean(m.capabilities?.retrieval),
+        },
+      }));
   }
 }

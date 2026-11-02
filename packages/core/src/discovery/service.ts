@@ -14,6 +14,7 @@ import { normalize } from '../metadata/matcher/normalize.js';
 import type { BaseLogger } from '../logging.js';
 import type { Clock } from '../platform/types.js';
 import type { DebridService } from '../providers/debrid/service.js';
+import type { Scraper } from './scrapers/types.js';
 import type { TorrentSourceManager, TorrentSourceRow } from './manager.js';
 import { buildQueries, type DiscoveryTarget } from './query-builder.js';
 import { rankHit, type RankPreferences } from './ranking.js';
@@ -44,6 +45,8 @@ export interface DiscoveryServiceDeps {
   clock?: Clock;
   /** Cached-availability checks for the ranked results. */
   debrid?: DebridService;
+  /** Native scrapers searched alongside configured torrent sources. */
+  scrapers?: readonly Scraper[];
   /** Result cache lifetime. */
   cacheTtlMs?: number;
   maxResults?: number;
@@ -63,6 +66,7 @@ interface ResolvedDeps {
   logger: BaseLogger;
   clock?: Clock;
   debrid?: DebridService;
+  scrapers?: readonly Scraper[];
   cacheTtlMs: number;
   maxResults: number;
   timeoutMs: number;
@@ -132,22 +136,50 @@ export class DiscoveryService {
   async #search(target: DiscoveryTarget, opts: DiscoveryOptions): Promise<DiscoverResponseDto> {
     const queries = buildQueries(target).slice(0, this.#d.maxQueries);
     const sources = dedupeByUrl(await this.#d.sources.list()).filter((s) => s.enabled === 1);
+    const scrapers = this.#d.scrapers ?? [];
 
     const errors: DiscoverResponseDto['errors'] = [];
     const all: AggregatedHit[] = [];
 
+    // Search configured torrent sources and native scrapers together.
+    const targets: Array<{ id: string; name: string; run: (q: string) => Promise<AggregatedHit[]> }> = [
+      ...sources.map((s) => ({ id: s.id, name: s.name, run: (q: string) => this.#searchSource(s, q) })),
+      ...scrapers.map((sc) => ({ id: sc.id, name: sc.name, run: (q: string) => this.#searchScraper(sc, q) })),
+    ];
+
+    this.#d.logger.info(
+      { title: target.title, queries: queries.length, torrentSources: sources.length, scrapers: scrapers.map((s) => s.id) },
+      'discovery search start',
+    );
+
     for (const query of queries) {
-      const settled = await Promise.allSettled(sources.map((s) => this.#searchSource(s, query)));
+      const settled = await Promise.allSettled(targets.map((t) => t.run(query)));
       for (let i = 0; i < settled.length; i++) {
         const r = settled[i]!;
-        const s = sources[i]!;
-        if (r.status === 'fulfilled') all.push(...r.value);
-        else errors.push({ sourceId: s.id, name: s.name, message: errorMessage(r.reason) });
+        const t = targets[i]!;
+        if (r.status === 'fulfilled') {
+          all.push(...r.value);
+          this.#d.logger.info({ source: t.id, query, results: r.value.length }, 'discovery source results');
+        } else {
+          const message = errorMessage(r.reason);
+          errors.push({ sourceId: t.id, name: t.name, message });
+          this.#d.logger.warn({ source: t.id, query, error: message }, 'discovery source failed');
+        }
       }
       if (this.#enough(all, target, opts)) break;
     }
 
-    const ranked = this.#applyCachedPrefs(await this.#annotateCached(this.#rank(all, target, opts)), opts);
+    const ranked = this.#rank(all, target, opts);
+    this.#d.logger.info({ title: target.title, results: ranked.length }, 'discovery results before cache check');
+    const annotated = await this.#annotateCached(ranked);
+    const counts = (arr: DiscoverResultDto[], status: string) => arr.filter((r) => r.cached.some((c) => c.status === status)).length;
+    this.#d.logger.info(
+      { cached: counts(annotated, 'cached'), uncached: counts(annotated, 'uncached'), unknown: counts(annotated, 'unknown'), unavailable: counts(annotated, 'unavailable') },
+      'discovery cache status',
+    );
+    const filtered = this.#applyCachedPrefs(annotated, opts);
+    this.#d.logger.info({ before: annotated.length, after: filtered.length, hideUncached: Boolean(opts.hideUncached) }, 'discovery results after filtering');
+
     return {
       query: {
         scope: target.scope,
@@ -156,7 +188,7 @@ export class DiscoveryService {
         ...(target.album ? { album: target.album } : {}),
         ...(target.year ? { year: target.year } : {}),
       },
-      results: ranked.slice(0, this.#d.maxResults),
+      results: filtered.slice(0, this.#d.maxResults),
       errors: dedupeErrors(errors),
     };
   }
@@ -167,6 +199,16 @@ export class DiscoveryService {
     const signal = AbortSignal.timeout(this.#d.timeoutMs);
     for await (const hit of indexer.search({ query, signal })) {
       out.push({ hit, sourceId: source.id, sourceName: source.name });
+      if (out.length >= PER_QUERY_CAP) break;
+    }
+    return out;
+  }
+
+  async #searchScraper(scraper: Scraper, query: string): Promise<AggregatedHit[]> {
+    const out: AggregatedHit[] = [];
+    const signal = AbortSignal.timeout(this.#d.timeoutMs);
+    for await (const hit of scraper.search({ query, signal })) {
+      out.push({ hit, sourceId: scraper.id, sourceName: scraper.name });
       if (out.length >= PER_QUERY_CAP) break;
     }
     return out;
@@ -210,25 +252,19 @@ export class DiscoveryService {
     return out;
   }
 
-  /** Annotate the top results with cached availability across debrid providers. */
+  /** Annotate the top results with cached availability across debrid providers (batch-checked by infohash). */
   async #annotateCached(ranked: DiscoverResultDto[]): Promise<DiscoverResultDto[]> {
     if (!this.#d.debrid) return ranked;
     const providers = await this.#d.debrid.listProviders();
     if (!providers.length) return ranked;
     const sourceIds = providers.map((p) => p.sourceId);
-    const toCheck = ranked.slice(0, this.#d.cachedCheckLimit).filter((r) => r.magnet || r.infoHash);
+    const toCheck = ranked.slice(0, this.#d.cachedCheckLimit).filter((r) => r.infoHash);
     if (!toCheck.length) return ranked;
-    const statuses = await Promise.all(
-      toCheck.map((r) =>
-        this.#d.debrid!.checkCached(
-          { ...(r.magnet ? { magnet: r.magnet } : {}), ...(r.infoHash ? { infoHash: r.infoHash } : {}) },
-          sourceIds,
-        ),
-      ),
-    );
-    toCheck.forEach((r, i) => {
-      r.cached = statuses[i]!.map((s) => ({ providerId: s.providerId, providerName: s.providerName, status: s.status }));
-    });
+    const statuses = await this.#d.debrid.checkCachedBatch(toCheck.map((r) => r.infoHash!), sourceIds);
+    for (const r of toCheck) {
+      const s = statuses.get(r.infoHash!.toLowerCase());
+      r.cached = (s ?? []).map((x) => ({ providerId: x.providerId, providerName: x.providerName, status: x.status }));
+    }
     return ranked;
   }
 
@@ -236,7 +272,9 @@ export class DiscoveryService {
   #applyCachedPrefs(ranked: DiscoverResultDto[], opts: DiscoveryOptions): DiscoverResultDto[] {
     const isCached = (r: DiscoverResultDto) => r.cached.some((c) => c.status === 'cached');
     let out = ranked;
-    if (opts.hideUncached && ranked.some(isCached)) {
+    if (opts.hideUncached) {
+      // A strict cached-only filter: hide every uncached release, even when
+      // none are cached (the user asked to see only cached releases).
       out = ranked.filter(isCached);
     }
     if (opts.prioritizeCached) {

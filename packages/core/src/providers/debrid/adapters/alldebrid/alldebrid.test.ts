@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { json, mockHttp } from '../../../../testing/mock-http.js';
 import { collect, createTestContext } from '../../../../testing/provider-context.js';
-import { createDebridPlugin } from '../../index.js';
+import { createDebridPlugin, type DebridSourceProvider } from '../../index.js';
 import { createAllDebridAdapter } from './index.js';
 
 // Fixtures follow https://docs.alldebrid.com/ (v4/v4.1); ids and keys are fake.
@@ -33,16 +33,17 @@ function setup(opts: { retries?: boolean } = {}) {
       return ok({ link: `https://cdn.alldebrid.com/dl/${link.split('/').pop()}`, filename: 'x', filesize: 1000, host: 'alldebrid' });
     });
   const ctx = createTestContext({ fetch: http.fetch, ...(opts.retries ? { retries: true } : {}) });
-  const provider = createDebridPlugin(createAllDebridAdapter({ now: () => NOW, sleep: async () => undefined })).create({ apiKey: 'ad-key', probeTags: false }, ctx);
+  const provider = createDebridPlugin(createAllDebridAdapter({ now: () => NOW, sleep: async () => undefined })).create({ apiKey: 'ad-key', probeTags: false }, ctx) as unknown as DebridSourceProvider;
   return { http, ctx, provider };
 }
 
 describe('AllDebrid adapter', () => {
-  it('lists audio from ready magnets (nested file tree) and saved links', async () => {
+  it('lists files from ready magnets (nested file tree) and saved links (adapter)', async () => {
     const { provider, http } = setup();
-    const files = await collect(provider.listLibrary({ signal }));
+    const files = await collect(provider.adapter.listFiles({ signal }));
     expect(files.map((f) => [f.id, f.path, f.size])).toEqual([
       ['m:101:CD1/01 - Opening.flac', 'Artist - Album/CD1/01 - Opening.flac', 1000],
+      ['m:101:CD1/scan.jpg', 'Artist - Album/CD1/scan.jpg', 5],
       ['m:101:02 - Second.flac', 'Artist - Album/02 - Second.flac', 2000],
       [expect.stringMatching(/^l:[0-9a-f]{24}$/), 'Saved links/saved.mp3', 300],
     ]);
@@ -53,12 +54,18 @@ describe('AllDebrid adapter', () => {
     expect(http.calls.map((c) => c.url.pathname).every((p) => /\/(user|magnet\/status|magnet\/files|user\/links)$/.test(p))).toBe(true);
   });
 
+  it('does not enumerate the account into the library (retrieval-only)', async () => {
+    const { provider, http } = setup();
+    expect(await collect(provider.listLibrary({ signal }))).toEqual([]);
+    expect(http.calls).toHaveLength(0); // no account-listing HTTP calls at all
+  });
+
   it('unlocks only the account link of the requested file', async () => {
     const { provider, http } = setup();
     const s = await provider.resolveStream('m:101:CD1/01 - Opening.flac', { signal });
     expect(s).toMatchObject({ url: 'https://cdn.alldebrid.com/dl/AAA', redirectSafe: false });
     expect(new URLSearchParams(http.to(`${API}/v4/link/unlock`)[0]!.body!).get('link')).toBe('https://alldebrid.com/f/AAA');
-    const saved = (await collect(provider.listLibrary({ signal }))).find((f) => f.id.startsWith('l:'))!;
+    const saved = (await collect(provider.adapter.listFiles({ signal }))).find((f) => f.id.startsWith('l:'))!;
     expect((await provider.resolveStream(saved.id, { signal })).url).toBe('https://cdn.alldebrid.com/dl/abc');
   });
 
@@ -90,7 +97,7 @@ describe('AllDebrid adapter', () => {
     const { provider, http } = setup();
     http.on('*', (u) => u.href.startsWith(API), err('AUTH_BAD_APIKEY', 401));
     expect(await provider.testConnection!({ signal })).toMatchObject({ ok: false, message: expect.stringContaining('rejected the API key') });
-    await expect(collect(provider.listLibrary({ signal }))).rejects.toMatchObject({ code: 'auth' });
+    await expect(collect(provider.adapter.listFiles({ signal }))).rejects.toMatchObject({ code: 'auth' });
   });
 
   it('explains blocked requests', async () => {
@@ -102,7 +109,7 @@ describe('AllDebrid adapter', () => {
   it('backs off on 429 then succeeds; persistent 429 → rate_limited', async () => {
     const a = setup({ retries: true });
     a.http.on('POST', `${API}/v4.1/magnet/status`, json({}, 429, { 'retry-after': '2' }), 1);
-    expect(await collect(a.provider.listLibrary({ signal }))).toHaveLength(3);
+    expect(await collect(a.provider.adapter.listFiles({ signal }))).toHaveLength(4);
     expect(a.ctx.delays).toEqual([2000]);
 
     const b = setup({ retries: true });
@@ -114,14 +121,14 @@ describe('AllDebrid adapter', () => {
   it('maps network failures to unavailable', async () => {
     const { provider, http } = setup();
     http.fail('*', (u) => u.href.startsWith(API));
-    await expect(collect(provider.listLibrary({ signal }))).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(collect(provider.adapter.listFiles({ signal }))).rejects.toMatchObject({ code: 'unavailable' });
   });
 
   it('handles an empty account', async () => {
     const { provider, http } = setup();
     http.on('POST', `${API}/v4.1/magnet/status`, ok({ magnets: [] }));
     http.on('GET', `${API}/v4/user/links`, ok({ links: [] }));
-    expect(await collect(provider.listLibrary({ signal }))).toEqual([]);
+    expect(await collect(provider.adapter.listFiles({ signal }))).toEqual([]);
     expect(http.to(`${API}/v4/magnet/files`)).toHaveLength(0);
   });
 
@@ -149,6 +156,19 @@ describe('AllDebrid adapter', () => {
     expect(new URLSearchParams(http.to(`${API}/v4/magnet/instant`)[0]!.body!).get('magnets')).toContain('urn:btih:aaa');
   });
 
+  it('batch-checks many hashes in one request', async () => {
+    const http = mockHttp().on('POST', `${API}/v4/magnet/instant`, ok({ magnets: [
+      { hash: 'aaa', instant: true },
+      { hash: 'bbb', instant: false },
+    ] }));
+    const adapter = createAllDebridAdapter({ now: () => NOW, sleep: async () => undefined }).create({ apiKey: 'ad-key' }, createTestContext({ fetch: http.fetch }));
+    const out = await adapter.checkCachedBatch!(['aaa', 'bbb', 'ccc'], { signal });
+    expect(out.get('aaa')).toEqual({ cached: true });
+    expect(out.get('bbb')).toEqual({ cached: false });
+    expect(out.get('ccc')).toEqual({ cached: false, unknown: true }); // not reported → unknown
+    expect(http.to(`${API}/v4/magnet/instant`)).toHaveLength(1); // one request, not three
+  });
+
   it('adds a magnet (non-idempotent) and reports status', async () => {
     const http = mockHttp()
       .on('POST', `${API}/v4/magnet/upload`, ok({ magnets: [{ id: 202, hash: 'aaa' }] }))
@@ -156,5 +176,25 @@ describe('AllDebrid adapter', () => {
     const adapter = createAllDebridAdapter({ now: () => NOW, sleep: async () => undefined }).create({ apiKey: 'ad-key' }, createTestContext({ fetch: http.fetch }));
     expect(await adapter.addMagnet!('magnet:?xt=urn:btih:aaa', { signal })).toEqual({ id: '202', status: 'queued' });
     expect(await adapter.getStatus!('202', { signal })).toEqual({ status: 'finished' });
+  });
+
+  it('lists and resolves the files of one submitted torrent (job-scoped)', async () => {
+    const http = mockHttp()
+      .on('POST', `${API}/v4/magnet/files`, ok({ magnets: [{ id: '101', files: tree }] }))
+      .on('POST', `${API}/v4/link/unlock`, (req) =>
+        ok({ link: `https://cdn.alldebrid.com/dl/${new URLSearchParams(req.body ?? '').get('link')!.split('/').pop()}`, filesize: 1000 }),
+      );
+    const adapter = createAllDebridAdapter({ now: () => NOW, sleep: async () => undefined }).create({ apiKey: 'ad-key' }, createTestContext({ fetch: http.fetch }));
+
+    const files = await adapter.listTorrentFiles!('101', { signal });
+    expect(files.map((f) => [f.id, f.path, f.size])).toEqual([
+      ['CD1/01 - Opening.flac', 'CD1/01 - Opening.flac', 1000],
+      ['CD1/scan.jpg', 'CD1/scan.jpg', 5],
+      ['02 - Second.flac', '02 - Second.flac', 2000],
+    ]);
+
+    expect((await adapter.resolveFileLink!('101', 'CD1/01 - Opening.flac', { signal })).url).toBe('https://cdn.alldebrid.com/dl/AAA');
+    expect(new URLSearchParams(http.to(`${API}/v4/link/unlock`)[0]!.body!).get('link')).toBe('https://alldebrid.com/f/AAA');
+    await expect(adapter.resolveFileLink!('101', 'missing.flac', { signal })).rejects.toMatchObject({ code: 'not_found' });
   });
 });

@@ -9,7 +9,7 @@
  * and are often tied to the requesting IP, so the server always proxies them.
  */
 
-import { audioMimeType, isAudioFile, type ConfigField, type ConfigValues } from '@overtone/shared';
+import { audioMimeType, type ConfigField, type ConfigValues } from '@overtone/shared';
 import { probeRemoteTags } from '../../metadata/probe.js';
 import { ProviderError } from '../errors.js';
 import type {
@@ -111,20 +111,15 @@ export class DebridSourceProvider implements SourceProvider {
     return this.#adapter;
   }
 
-  async *listLibrary(opts: CallOptions): AsyncIterable<SourceFile> {
-    for await (const f of this.adapter.listFiles(opts)) {
-      opts.signal.throwIfAborted();
-      if (!isAudioFile(f.name)) continue;
-      const mimeType = audioMimeType(f.name);
-      yield {
-        id: f.id,
-        name: f.name,
-        path: f.path,
-        size: f.size,
-        ...(mimeType ? { mimeType } : {}),
-        ...(f.modifiedAt ? { modifiedAt: f.modifiedAt } : {}),
-      };
-    }
+  /**
+   * Debrid is a playback service, not a catalogue: the account is NOT
+   * enumerated into the library. Debrid-acquired files enter the library only
+   * through Overtone-created retrieval jobs (the synthetic "retrieval" source).
+   * `resolveStream` below still resolves legacy whole-account file ids so any
+   * rows from before this change keep playing.
+   */
+  async *listLibrary(_opts: CallOptions): AsyncIterable<SourceFile> {
+    // Intentionally empty — no whole-account enumeration.
   }
 
   async resolveStream(fileId: string, opts: ResolveOptions): Promise<ResolvedStream> {

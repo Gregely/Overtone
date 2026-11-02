@@ -47,6 +47,11 @@ export interface ProviderManifest {
   configSchema: ConfigSchema;
   capabilities?: ProviderCapabilities;
   /**
+   * Hidden providers are internal (e.g. the synthetic "retrieval" source) and
+   * are not offered in the "Add source" picker.
+   */
+  hidden?: boolean;
+  /**
    * Supports an OAuth device / PIN flow. Must be set together with
    * `configSchema.deviceLogin` (which tells the UI what to render).
    */

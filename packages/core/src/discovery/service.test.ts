@@ -10,6 +10,9 @@ import { DiscoveryService } from './service.js';
 import type { IndexerHit, TorrentIndexerDefinition } from './types.js';
 import type { DiscoveryTarget } from './query-builder.js';
 import type { DebridService } from '../providers/debrid/service.js';
+import type { Scraper } from './scrapers/types.js';
+import { createX1337Scraper } from './scrapers/x1337.js';
+import { mockHttp } from '../testing/mock-http.js';
 
 const target: DiscoveryTarget = { scope: 'album', title: 'Led Zeppelin IV', artist: 'Led Zeppelin', album: 'Led Zeppelin IV', year: 1971 };
 
@@ -40,12 +43,12 @@ function fakeRegistry(handler: Handler): TorrentIndexerRegistry {
   return registry;
 }
 
-async function setup(handler: Handler, cacheTtlMs = 60_000, debrid?: DebridService) {
+async function setup(handler: Handler, cacheTtlMs = 60_000, debrid?: DebridService, scrapers?: readonly Scraper[]) {
   const db = createDatabase(syncHandleDriver(new Sqlite(':memory:')));
   await migrate(db);
   const secrets = new MemorySecretStore();
   const manager = new TorrentSourceManager({ db, registry: fakeRegistry(handler), secrets, logger: silentLogger, userAgent: 'Overtone/test' });
-  const service = new DiscoveryService({ sources: manager, logger: silentLogger, cacheTtlMs, ...(debrid ? { debrid } : {}) });
+  const service = new DiscoveryService({ sources: manager, logger: silentLogger, cacheTtlMs, ...(debrid ? { debrid } : {}), ...(scrapers ? { scrapers } : {}) });
   return { db, secrets, manager, service };
 }
 
@@ -149,8 +152,8 @@ describe('DiscoveryService', () => {
       async listProviders() {
         return [{ sourceId: 'ad', name: 'AllDebrid', providerId: 'alldebrid', retrieval: true }];
       },
-      async checkCached(ref: { infoHash?: string }) {
-        return [{ providerId: 'ad', providerName: 'AllDebrid', status: ref.infoHash === cachedHash ? ('cached' as const) : ('uncached' as const) }];
+      async checkCachedBatch(hashes: string[]) {
+        return new Map(hashes.map((h) => [h.toLowerCase(), [{ providerId: 'ad', providerName: 'AllDebrid', status: h === cachedHash ? ('cached' as const) : ('uncached' as const) }]]));
       },
     } as unknown as DebridService;
 
@@ -170,5 +173,118 @@ describe('DiscoveryService', () => {
 
     const prioritised = await service.discover(target, { prioritizeCached: true });
     expect(prioritised.results[0]!.infoHash).toBe(cachedHash);
+  });
+
+  it('searches native scrapers in parallel with torrent sources', async () => {
+    const fakeScraper: Scraper = {
+      id: 'test-scraper',
+      name: 'Test Scraper',
+      baseUrl: 'http://scraper',
+      async *search({ query, signal }) {
+        signal.throwIfAborted();
+        yield hit({ title: 'Led Zeppelin - Led Zeppelin IV FLAC', infoHash: 'cccccccccccccccccccccccccccccccccccccccc', seeders: 7 });
+      },
+    };
+    const { manager, service } = await setup(() => [], 60_000, undefined, [fakeScraper]);
+    await manager.create({ kind: 'torznab', name: 'Empty source', url: 'http://empty' });
+
+    const res = await service.discover(target);
+    expect(res.results).toHaveLength(1);
+    expect(res.results[0]!.sources).toEqual([{ id: 'test-scraper', name: 'Test Scraper' }]);
+  });
+
+  it('isolates a failing scraper without breaking the search', async () => {
+    const good: Scraper = {
+      id: 'good',
+      name: 'Good',
+      baseUrl: 'http://good',
+      async *search({ signal }) {
+        signal.throwIfAborted();
+        yield hit({ title: 'Led Zeppelin - Led Zeppelin IV FLAC', infoHash: 'dddddddddddddddddddddddddddddddddddddddd' });
+      },
+    };
+    const bad: Scraper = {
+      id: 'bad',
+      name: 'Bad',
+      baseUrl: 'http://bad',
+      async *search() {
+        throw new Error('boom');
+      },
+    };
+    const { service } = await setup(() => [], 60_000, undefined, [good, bad]);
+    const res = await service.discover(target);
+    expect(res.results).toHaveLength(1);
+    expect(res.errors).toEqual([{ sourceId: 'bad', name: 'Bad', message: 'boom' }]);
+  });
+
+  it('feeds the 1337x scraper into discovery and batch cache-checks its infohashes', async () => {
+    const infoHash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const searchHtml = `<table class="table-list"><tbody><tr>
+      <td class="coll-1 name"><a href="/torrent/12345/Led-Zeppelin-Led-Zeppelin-IV-1971-FLAC/">Led Zeppelin - Led Zeppelin IV (1971) FLAC</a></td>
+      <td class="coll-2">12</td><td class="coll-3">1</td><td class="coll-4">800 MB</td><td class="coll-date">2020</td>
+    </tr></tbody></table>`;
+    const detailHtml = `<a href="magnet:?xt=urn:btih:${infoHash}&amp;dn=Led+Zeppelin+IV">Magnet</a>`;
+    const mock = mockHttp()
+      .on('GET', /\/search\//, new Response(searchHtml, { headers: { 'content-type': 'text/html' } }))
+      .on('GET', /\/torrent\//, new Response(detailHtml, { headers: { 'content-type': 'text/html' } }));
+
+    const stubDebrid = {
+      async listProviders() {
+        return [{ sourceId: 'ad', name: 'AllDebrid', providerId: 'alldebrid', retrieval: true }];
+      },
+      async checkCachedBatch(hashes: string[]) {
+        return new Map(hashes.map((h) => [h.toLowerCase(), [{ providerId: 'ad', providerName: 'AllDebrid', status: h.toLowerCase() === infoHash ? ('cached' as const) : ('uncached' as const) }]]));
+      },
+    } as unknown as DebridService;
+
+    const scraper = createX1337Scraper({ baseUrl: 'https://x1337.test', maxPages: 1 }).create({
+      fetch: mock.fetch as never,
+      logger: silentLogger as never,
+    });
+
+    const { service } = await setup(() => [], 60_000, stubDebrid, [scraper]);
+    const res = await service.discover(target);
+
+    expect(res.results[0]).toMatchObject({
+      infoHash,
+      sources: [{ id: 'x1337', name: '1337x' }],
+      cached: [{ providerId: 'ad', providerName: 'AllDebrid', status: 'cached' }],
+    });
+    expect(mock.to(/\/torrent\//).length).toBeGreaterThanOrEqual(1); // detail page fetched to obtain the infohash
+  });
+
+  it('keeps uncached scraper results visible by default and hides them only when hideUncached is set', async () => {
+    const uncachedHash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const stubDebrid = {
+      async listProviders() {
+        return [{ sourceId: 'ad', name: 'AllDebrid', providerId: 'alldebrid', retrieval: true }];
+      },
+      async checkCachedBatch(hashes: string[]) {
+        return new Map(hashes.map((h) => [h.toLowerCase(), [{ providerId: 'ad', providerName: 'AllDebrid', status: 'uncached' as const }]]));
+      },
+    } as unknown as DebridService;
+
+    const scraper: Scraper = {
+      id: 'x1337',
+      name: '1337x',
+      baseUrl: 'https://x1337.test',
+      async *search({ signal }) {
+        signal.throwIfAborted();
+        yield hit({ title: 'Led Zeppelin - Led Zeppelin IV (1971) FLAC', infoHash: uncachedHash, seeders: 3 });
+      },
+    };
+    const { service } = await setup(() => [], 60_000, stubDebrid, [scraper]);
+
+    // Default (hideUncached disabled): the uncached release is returned and annotated.
+    const res = await service.discover(target);
+    expect(res.results).toHaveLength(1);
+    expect(res.results[0]).toMatchObject({
+      infoHash: uncachedHash,
+      cached: [{ providerId: 'ad', providerName: 'AllDebrid', status: 'uncached' }],
+    });
+
+    // Only when the user opts in does an uncached release disappear.
+    const hidden = await service.discover(target, { hideUncached: true });
+    expect(hidden.results).toEqual([]);
   });
 });
