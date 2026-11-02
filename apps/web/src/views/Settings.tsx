@@ -31,6 +31,9 @@ export function SettingsView() {
             <Link to="/settings/sources" className="btn">
               <Icon name="library" size={18} /> Manage sources
             </Link>{' '}
+            <Link to="/settings/torrent-sources" className="btn ghost">
+              <Icon name="search" size={18} /> Torrent sources
+            </Link>{' '}
             <Link to="/review" className="btn ghost">
               <Icon name="wand" size={18} /> Review matches
             </Link>

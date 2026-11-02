@@ -65,6 +65,8 @@ export interface ProviderCapabilities {
    * still opt in via ResolvedStream.redirectSafe.
    */
   redirectable?: boolean;
+  /** The source supports retrieval (check-cached / add-magnet) for "Find sources". */
+  retrieval?: boolean;
 }
 
 // ── Plugin & instance ───────────────────────────────────────────────────────

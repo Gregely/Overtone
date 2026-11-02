@@ -20,6 +20,7 @@ import { ReviewView } from '../views/Review';
 import { SearchView } from '../views/Search';
 import { SettingsView } from '../views/Settings';
 import { SourceEditView, SourcesView } from '../views/Sources';
+import { TorrentSourceEditView, TorrentSourcesView } from '../views/TorrentSources';
 import { FirstSourceGuide, ModeChooser } from '../views/Welcome';
 import { ApiProvider, useApiState } from './context';
 import { ModeProvider } from './mode';
@@ -179,6 +180,9 @@ export function AppRoutes() {
         <Route path="settings/sources" element={<SourcesView />} />
         <Route path="settings/sources/new" element={<SourceEditView />} />
         <Route path="settings/sources/:id" element={<SourceEditView />} />
+        <Route path="settings/torrent-sources" element={<TorrentSourcesView />} />
+        <Route path="settings/torrent-sources/new" element={<TorrentSourceEditView />} />
+        <Route path="settings/torrent-sources/:id" element={<TorrentSourceEditView />} />
         <Route path="welcome" element={<FirstSourceGuide />} />
         <Route
           path="*"

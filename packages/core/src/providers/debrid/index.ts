@@ -68,7 +68,7 @@ export function createDebridPlugin(def: DebridAdapterDefinition): ProviderPlugin
             }
           : {}),
       },
-      capabilities: { testConnection: true, redirectable: false },
+      capabilities: { testConnection: true, redirectable: false, ...(def.retrieval ? { retrieval: true } : {}) },
       ...(def.deviceFlow ? { deviceFlow: def.deviceFlow } : {}),
     },
     create(config, ctx) {

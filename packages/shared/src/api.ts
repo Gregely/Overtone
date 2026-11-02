@@ -15,6 +15,8 @@ export interface ProviderCapabilitiesDto {
   deviceFlow: boolean;
   /** Provider can return redirect-safe URLs, so `redirect` stream mode is meaningful. */
   redirectable: boolean;
+  /** Provider supports retrieval (check-cached / add-magnet) for "Find sources". */
+  retrieval: boolean;
 }
 
 /** GET /api/providers — the plugin catalog shown in "Add source". */

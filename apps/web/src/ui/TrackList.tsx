@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 import type { TrackDto } from '@overtone/shared';
 import { useIsAdmin } from '../app/context';
 import { usePlayer, usePlayerState } from '../player/react';
+import { FindSourcesDialog } from '../views/FindSources';
 import { FixMatchDialog } from '../views/FixMatch';
 import { Dialog } from './Dialog';
 import { formatMs } from './format';
@@ -25,6 +26,7 @@ export function TrackList({ tracks, onPlay, numbered = false, showAlbum = true, 
   const playing = usePlayerState((s) => s.status === 'playing');
   const [menuFor, setMenuFor] = useState<TrackDto | null>(null);
   const [fixFor, setFixFor] = useState<TrackDto | null>(null);
+  const [findFor, setFindFor] = useState<TrackDto | null>(null);
   const play = onPlay ?? ((i: number) => player.playTracks(tracks, i));
 
   return (
@@ -76,13 +78,18 @@ export function TrackList({ tracks, onPlay, numbered = false, showAlbum = true, 
           setMenuFor(null);
           setFixFor(t);
         }}
+        onFindSources={(t) => {
+          setMenuFor(null);
+          setFindFor(t);
+        }}
       />
       {fixFor && <FixMatchDialog track={fixFor} onClose={() => setFixFor(null)} />}
+      {findFor && <FindSourcesDialog target={{ kind: 'track', id: findFor.id, title: findFor.title }} onClose={() => setFindFor(null)} />}
     </>
   );
 }
 
-function TrackActions({ track, onClose, onFixMatch }: { track: TrackDto | null; onClose: () => void; onFixMatch: (t: TrackDto) => void }) {
+function TrackActions({ track, onClose, onFixMatch, onFindSources }: { track: TrackDto | null; onClose: () => void; onFixMatch: (t: TrackDto) => void; onFindSources: (t: TrackDto) => void }) {
   const player = usePlayer();
   const admin = useIsAdmin();
   const t = track;
@@ -110,6 +117,11 @@ function TrackActions({ track, onClose, onFixMatch }: { track: TrackDto | null; 
               }}
             >
               <Icon name="queue" /> Add to queue
+            </button>
+          </li>
+          <li>
+            <button type="button" onClick={() => onFindSources(t)}>
+              <Icon name="search" /> Find sources
             </button>
           </li>
           {t.album && (

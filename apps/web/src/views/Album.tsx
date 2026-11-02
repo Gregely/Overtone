@@ -10,6 +10,7 @@ import { Icon } from '../ui/Icon';
 import { AlbumGrid, Cover } from '../ui/media';
 import { QueryView } from '../ui/states';
 import { TrackList } from '../ui/TrackList';
+import { FindSourcesDialog } from './FindSources';
 import { AlbumMatchDialog } from './FixMatch';
 
 export function AlbumView() {
@@ -18,6 +19,7 @@ export function AlbumView() {
   const player = usePlayer();
   const admin = useIsAdmin();
   const [fixing, setFixing] = useState(false);
+  const [finding, setFinding] = useState(false);
 
   return (
     <QueryView query={album} label="Loading album">
@@ -50,6 +52,9 @@ export function AlbumView() {
                     <button type="button" className="btn" onClick={() => player.playTracks(tracks, Math.floor(Math.random() * tracks.length), { shuffle: true })}>
                       <Icon name="shuffle" size={18} /> Shuffle
                     </button>
+                    <button type="button" className="btn ghost" onClick={() => setFinding(true)}>
+                      <Icon name="search" size={18} /> Find sources
+                    </button>
                     {admin && (
                       <button type="button" className="btn ghost" onClick={() => setFixing(true)}>
                         <Icon name="wand" size={18} /> Fix album match
@@ -70,6 +75,7 @@ export function AlbumView() {
               )}
             </div>
             {fixing && <AlbumMatchDialog album={a} onClose={() => setFixing(false)} />}
+            {finding && <FindSourcesDialog target={{ kind: 'album', id: a.id, title: a.title }} onClose={() => setFinding(false)} />}
           </Page>
         );
       }}

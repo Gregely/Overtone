@@ -17,6 +17,8 @@ import type {
   SourceWriteDto,
   StreamUrlsRequestDto,
   StreamUrlsResponseDto,
+  DiscoverRequestDto,
+  TorrentSourceWriteDto,
   UserDto,
 } from '@overtone/shared';
 import type { OvertoneCore } from '../core.js';
@@ -141,6 +143,26 @@ export function createEmbeddedRouter(core: OvertoneCore, opts: EmbeddedRouterOpt
   add('POST', '/api/sources/:id/scan', async ({ params }) => api.scanSource(params[0]!), 202);
   add('POST', '/api/scan', async () => api.scanAll(), 202);
   add('GET', '/api/scan/status', async () => api.scanStatus());
+
+  // ── torrent sources ("Find sources") ─────────────────────────────────────
+  const torrentKeys = ['kind', 'name', 'enabled', 'url', 'apiKey', 'indexers'];
+  add('GET', '/api/torrent-sources', async () => api.listTorrentSources());
+  add('GET', '/api/torrent-sources/:id', async ({ params }) => api.torrentSource(params[0]!));
+  add('POST', '/api/torrent-sources', async ({ body }) => api.createTorrentSource(object<TorrentSourceWriteDto>(body, torrentKeys, ['kind'])), 201);
+  add('PATCH', '/api/torrent-sources/:id', async ({ params, body }) => api.updateTorrentSource(params[0]!, object<TorrentSourceWriteDto>(body, torrentKeys)));
+  add('DELETE', '/api/torrent-sources/:id', async ({ params }) => api.deleteTorrentSource(params[0]!), 204);
+  add('POST', '/api/torrent-sources/test', async ({ body }) => api.testTorrentSource(undefined, object<TorrentSourceWriteDto>(body, torrentKeys, ['kind'])));
+  add('POST', '/api/torrent-sources/:id/test', async ({ params, body }) => api.testTorrentSource(params[0]!, object<TorrentSourceWriteDto>(body, torrentKeys)));
+
+  add('POST', '/api/discover', async ({ body }) => api.discover(object<DiscoverRequestDto>(body, ['trackId', 'albumId', 'query', 'type', 'limit'])));
+
+  // ── debrid retrieval ("add to debrid") ──────────────────────────────────
+  add('GET', '/api/debrid/providers', async () => api.listDebridProviders());
+  add('POST', '/api/debrid/:sourceId/add-magnet', async ({ params, body }) => {
+    const b = object<{ magnet: string }>(body, ['magnet'], ['magnet']);
+    return api.addMagnet(params[0]!, String(b.magnet));
+  });
+  add('GET', '/api/debrid/:sourceId/status/:id', async ({ params }) => api.torrentStatus(params[0]!, params[1]!));
 
   // ── standalone only: Settings › Library ──────────────────────────────────
   add('GET', '/api/library/info', async () => libraryInfo(core, opts.databaseBytes));

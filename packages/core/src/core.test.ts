@@ -78,6 +78,7 @@ function build(db: Database, plugin: ProviderPlugin, secrets = new MemorySecretS
     db,
     registry,
     secrets,
+    torrentSecrets: new MemorySecretStore(),
     blobs: new MemoryBlobStore(),
     mb: new FakeMusicBrainz([homework]),
     clock,

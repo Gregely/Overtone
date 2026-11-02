@@ -15,6 +15,7 @@ import {
   type ProviderRegistry,
   type ResolveCache,
   type SourceManager,
+  type TorrentSourceManager,
 } from '@overtone/core';
 import type { ScanStatusDto } from '@overtone/shared';
 import { AuthService } from './auth/service.js';
@@ -49,6 +50,7 @@ export interface Services {
   auth: AuthService;
   registry: ProviderRegistry;
   sources: SourceManager;
+  torrentSources: TorrentSourceManager;
   deviceLogins: DeviceLoginService;
   library: LibraryRepo;
   resolver: ResolveCache;
@@ -75,6 +77,7 @@ export function createServices(config: Config, logger: Logger, o: ServiceOverrid
     db: database,
     registry,
     secrets: new EncryptedColumnSecretStore(database, new SecretBox(deriveKey(config.secretKey, 'secrets'))),
+    torrentSecrets: new EncryptedColumnSecretStore(database, new SecretBox(deriveKey(config.secretKey, 'secrets')), 'torrent_sources'),
     blobs: new FsBlobStore(config.dataDir),
     logger,
     version: config.version,
@@ -95,6 +98,7 @@ export function createServices(config: Config, logger: Logger, o: ServiceOverrid
     auth,
     registry,
     sources: core.sources,
+    torrentSources: core.torrentSources,
     deviceLogins: core.deviceLogins,
     library: core.library,
     resolver: core.resolver,

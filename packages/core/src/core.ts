@@ -6,6 +6,9 @@
  */
 import { CoreApi } from './api/core-api.js';
 import type { Database } from './db/database.js';
+import { TorrentSourceManager } from './discovery/manager.js';
+import { createDefaultTorrentRegistry, type TorrentIndexerRegistry } from './discovery/registry.js';
+import { DiscoveryService } from './discovery/service.js';
 import { LibraryRepo } from './library/repo.js';
 import { LibraryScanner, MatchWorker } from './library/scanner.js';
 import { silentLogger, type Logger } from './logging.js';
@@ -16,6 +19,7 @@ import type { MusicBrainzApi } from './metadata/musicbrainz/types.js';
 import { systemClock, type BlobStore, type Clock, type HttpFetch, type SecretStore } from './platform/types.js';
 import { createDefaultRegistry, type BuiltinOptions } from './providers/index.js';
 import type { ProviderRegistry } from './providers/registry.js';
+import { DebridService } from './providers/debrid/service.js';
 import { ResolveCache } from './providers/resolve-cache.js';
 import { DeviceLoginService } from './sources/device-login.js';
 import { SourceManager } from './sources/manager.js';
@@ -23,9 +27,13 @@ import { SourceManager } from './sources/manager.js';
 export interface CoreOptions {
   db: Database;
   secrets: SecretStore;
+  /** Where torrent indexer API keys live — a separate store from music sources. */
+  torrentSecrets: SecretStore;
   blobs: BlobStore;
   /** Defaults to the built-in providers. */
   registry?: ProviderRegistry;
+  /** Defaults to the built-in torrent indexer protocols (Torznab). */
+  torrentRegistry?: TorrentIndexerRegistry;
   builtins?: BuiltinOptions;
   /** Outbound HTTP for providers, MusicBrainz, artwork and tag probing. */
   fetch?: HttpFetch;
@@ -51,6 +59,9 @@ export interface CoreOptions {
 export interface OvertoneCore {
   db: Database;
   registry: ProviderRegistry;
+  torrentSources: TorrentSourceManager;
+  discovery: DiscoveryService;
+  debrid: DebridService;
   sources: SourceManager;
   deviceLogins: DeviceLoginService;
   library: LibraryRepo;
@@ -95,6 +106,18 @@ export function createCore(o: CoreOptions): OvertoneCore {
     ...(o.allowRedirect === false ? { allowRedirect: false } : {}),
     ...fetchOpt,
   });
+  const torrentRegistry = o.torrentRegistry ?? createDefaultTorrentRegistry();
+  const torrentSources = new TorrentSourceManager({
+    db: o.db,
+    registry: torrentRegistry,
+    secrets: o.torrentSecrets,
+    logger,
+    userAgent,
+    clock,
+    ...fetchOpt,
+  });
+  const debrid = new DebridService({ sources, registry, logger, clock });
+  const discovery = new DiscoveryService({ sources: torrentSources, logger, clock, debrid });
   const deviceLogins = new DeviceLoginService({ registry, logger, userAgent, now, ...fetchOpt });
   const library = new LibraryRepo(o.db, now);
   const resolver = new ResolveCache({ now });
@@ -133,7 +156,7 @@ export function createCore(o: CoreOptions): OvertoneCore {
     ...fetchOpt,
   });
   covers = new CoverArtService({ blobs: o.blobs, library, sources, logger, userAgent, now, ...(o.coverArtUrl ? { baseUrl: o.coverArtUrl } : {}), ...fetchOpt });
-  const api = new CoreApi({ registry, sources, deviceLogins, library, mb, matcher, scanner, matchWorker, covers });
+  const api = new CoreApi({ registry, sources, torrentSources, discovery, debrid, deviceLogins, library, mb, matcher, scanner, matchWorker, covers });
 
   // Config changes invalidate cached stream links for that source.
   sources.onChange((e) => resolver.invalidate(e.sourceId));
@@ -142,6 +165,9 @@ export function createCore(o: CoreOptions): OvertoneCore {
   return {
     db: o.db,
     registry,
+    torrentSources,
+    discovery,
+    debrid,
     sources,
     deviceLogins,
     library,
@@ -178,6 +204,7 @@ export function createCore(o: CoreOptions): OvertoneCore {
       await scanner.stop();
       await matchWorker.idle().catch(() => undefined);
       await sources.disposeAll();
+      discovery.close();
       await o.db.close();
     },
   };

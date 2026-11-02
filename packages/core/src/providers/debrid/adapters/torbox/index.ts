@@ -23,7 +23,8 @@
 import { ProviderError } from '../../../errors.js';
 import { readJson, send } from '../../../http.js';
 import type { CallOptions, DeviceFlowContext, DeviceFlowHandler, ProviderContext, ResolveOptions } from '../../../types.js';
-import type { DebridAccountInfo, DebridAdapter, DebridAdapterDefinition, DebridCredentials, DebridFile, DebridResolvedLink } from '../../types.js';
+import { refToInfoHash } from '../../magnet.js';
+import type { DebridAccountInfo, DebridAdapter, DebridAdapterDefinition, DebridAddResult, DebridCachedResult, DebridCredentials, DebridFile, DebridResolvedLink, DebridTorrentRef, DebridTorrentStatus } from '../../types.js';
 
 export interface TorBoxOptions {
   apiBase?: string;
@@ -61,6 +62,7 @@ export function createTorBoxAdapter(opts: TorBoxOptions = {}): DebridAdapterDefi
     name: 'TorBox',
     apiKeyUrl: 'https://torbox.app/settings',
     defaultLinkTtlMs: LINK_TTL_MS,
+    retrieval: true,
     deviceFlow: torBoxDeviceFlow(o),
     deviceLoginHelp: 'Shows a code to enter on torbox.app. Overtone receives an API token for this device.',
     create: (credentials, ctx) => new TorBoxAdapter(credentials, ctx, o),
@@ -150,6 +152,36 @@ class TorBoxAdapter implements DebridAdapter {
     const url = await this.#get<string>(`/${k.kind}/requestdl?${q}`, 'Get stream link', signal);
     if (!url) throw new ProviderError('unavailable', 'TorBox did not return a download link');
     return { url, expiresAt: new Date(this.#o.now() + LINK_TTL_MS) };
+  }
+
+  async checkCached(ref: DebridTorrentRef, { signal }: CallOptions): Promise<DebridCachedResult> {
+    const hash = refToInfoHash(ref);
+    if (!hash) return { cached: false, unknown: true };
+    const data = await this.#get<Array<{ name?: string; size?: number }> | null>(`/torrents/checkcached?hash=${encodeURIComponent(hash)}&format=list`, 'Check cache', signal);
+    if (!data) return { cached: false };
+    const files = data.map((f) => ({ name: f.name ?? '', size: Number(f.size) || 0 }));
+    return { cached: files.length > 0, files };
+  }
+
+  async addMagnet(magnet: string, { signal }: CallOptions): Promise<DebridAddResult> {
+    const data = await call<{ torrent_id?: number }>(this.#ctx, `${this.#o.apiBase}/torrents/createtorrent`, 'Add magnet', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${this.#key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ magnet }),
+      signal,
+      idempotent: false,
+    });
+    if (!data.torrent_id) throw new ProviderError('unavailable', 'TorBox did not return a torrent id');
+    return { id: String(data.torrent_id), status: 'queued' };
+  }
+
+  async getStatus(id: string, { signal }: CallOptions): Promise<DebridTorrentStatus> {
+    const items = (await this.#get<TbItem[] | null>('/torrents/mylist?bypass_cache=true&offset=0&limit=1000', 'Check torrent', signal)) ?? [];
+    const item = items.find((i) => String(i.id) === String(id));
+    if (!item) return { status: 'processing', progress: null };
+    if (item.download_finished) return { status: 'finished' };
+    if (item.download_present === false) return { status: 'error', message: 'TorBox could not download the torrent' };
+    return { status: 'processing', progress: null };
   }
 }
 

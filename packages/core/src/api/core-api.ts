@@ -12,6 +12,12 @@ import type {
   ConnectionTestResultDto,
   DeviceFlowPollDto,
   DeviceFlowStartDto,
+  DebridAddMagnetResultDto,
+  DebridProviderDto,
+  DebridTorrentStatusDto,
+  DiscoverRequestDto,
+  DiscoverResponseDto,
+  DiscoverScope,
   FileMatchRequestDto,
   LibraryFileDto,
   MatchCandidateDto,
@@ -20,10 +26,13 @@ import type {
   ScanStatusDto,
   SourceDto,
   SourceWriteDto,
+  TorrentSourceDto,
+  TorrentSourceTestResultDto,
+  TorrentSourceWriteDto,
   TrackDto,
 } from '@overtone/shared';
 import { ApiError } from '../errors.js';
-import type { AlbumSort, LibraryRepo, PlayableSource, SourceFileRow, ViewContext } from '../library/repo.js';
+import type { AlbumSort, DiscoveryMetadata, LibraryRepo, PlayableSource, SourceFileRow, ViewContext } from '../library/repo.js';
 import { toCandidateDto } from '../library/repo.js';
 import type { LibraryScanner, MatchWorker } from '../library/scanner.js';
 import type { CoverArtService } from '../metadata/coverart/service.js';
@@ -32,12 +41,19 @@ import { luceneEscape } from '../metadata/musicbrainz/client.js';
 import type { MusicBrainzApi } from '../metadata/musicbrainz/types.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { FileTags } from '../providers/types.js';
+import type { TorrentSourceManager } from '../discovery/manager.js';
+import type { DiscoveryService } from '../discovery/service.js';
+import type { DiscoveryTarget } from '../discovery/query-builder.js';
+import type { DebridService } from '../providers/debrid/service.js';
 import type { DeviceLoginService } from '../sources/device-login.js';
 import type { SourceManager } from '../sources/manager.js';
 
 export interface CoreApiDeps {
   registry: ProviderRegistry;
   sources: SourceManager;
+  torrentSources: TorrentSourceManager;
+  discovery: DiscoveryService;
+  debrid: DebridService;
   deviceLogins: DeviceLoginService;
   library: LibraryRepo;
   mb: MusicBrainzApi;
@@ -271,6 +287,75 @@ export class CoreApi {
     return this.s.deviceLogins.poll(flowId, userId);
   }
 
+  // ── Torrent sources ("Find sources") ─────────────────────────────────────
+
+  listTorrentSources(): Promise<TorrentSourceDto[]> {
+    return this.s.torrentSources.listDtos();
+  }
+
+  async torrentSource(id: string): Promise<TorrentSourceDto> {
+    return this.s.torrentSources.toDto(await this.s.torrentSources.require(id));
+  }
+
+  async createTorrentSource(body: TorrentSourceWriteDto): Promise<TorrentSourceDto> {
+    return this.s.torrentSources.toDto(await this.s.torrentSources.create(body));
+  }
+
+  async updateTorrentSource(id: string, body: TorrentSourceWriteDto): Promise<TorrentSourceDto> {
+    return this.s.torrentSources.toDto(await this.s.torrentSources.update(id, body));
+  }
+
+  async deleteTorrentSource(id: string): Promise<void> {
+    return this.s.torrentSources.delete(id);
+  }
+
+  testTorrentSource(id: string | undefined, body: TorrentSourceWriteDto): Promise<TorrentSourceTestResultDto> {
+    return this.s.torrentSources.test(id, body);
+  }
+
+  /** "Find sources": resolve the target metadata and run discovery across enabled indexers. */
+  async discover(body: DiscoverRequestDto): Promise<DiscoverResponseDto> {
+    const target = await this.#discoverTarget(body);
+    return this.s.discovery.discover(target);
+  }
+
+  async #discoverTarget(body: DiscoverRequestDto): Promise<DiscoveryTarget> {
+    if (body.query?.title) {
+      return {
+        scope: body.type ?? (body.query.album ? 'album' : 'track'),
+        title: body.query.title,
+        ...(body.query.artist ? { artist: body.query.artist } : {}),
+        ...(body.query.album ? { album: body.query.album } : {}),
+        ...(body.query.year ? { year: body.query.year } : {}),
+      };
+    }
+    if (body.trackId) {
+      const m = await this.s.library.discoveryForTrack(body.trackId);
+      if (!m) throw ApiError.notFound('Track');
+      return toTarget(m, 'track');
+    }
+    if (body.albumId) {
+      const m = await this.s.library.discoveryForAlbum(body.albumId);
+      if (!m) throw ApiError.notFound('Album');
+      return toTarget(m, 'album');
+    }
+    throw ApiError.badRequest('Provide a trackId, albumId or query');
+  }
+
+  // ── Debrid retrieval ("add to debrid") ──────────────────────────────────
+
+  listDebridProviders(): Promise<DebridProviderDto[]> {
+    return this.s.debrid.listProviders();
+  }
+
+  async addMagnet(sourceId: string, magnet: string): Promise<DebridAddMagnetResultDto> {
+    return this.s.debrid.addMagnet(sourceId, magnet);
+  }
+
+  async torrentStatus(sourceId: string, id: string): Promise<DebridTorrentStatusDto> {
+    return this.s.debrid.getStatus(sourceId, id);
+  }
+
   // ── Scanning ─────────────────────────────────────────────────────────────
 
   async matchStatus(): Promise<ScanStatusDto['matching']> {
@@ -295,4 +380,15 @@ export class CoreApi {
 
 function defined<T extends object>(o: T): T {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
+}
+
+function toTarget(m: DiscoveryMetadata, scope: DiscoverScope): DiscoveryTarget {
+  return {
+    scope,
+    title: m.title,
+    ...(m.artist ? { artist: m.artist } : {}),
+    ...(m.album ? { album: m.album } : {}),
+    ...(m.year ? { year: m.year } : {}),
+    ...(m.durationMs ? { durationMs: m.durationMs } : {}),
+  };
 }

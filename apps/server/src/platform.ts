@@ -6,22 +6,28 @@ import type { SecretBox } from './crypto/secret-box.js';
 
 /**
  * Source secrets, AES-256-GCM encrypted (key derived from OVERTONE_SECRET_KEY,
- * source id as associated data) into the `sources.secrets_enc` column.
+ * source id as associated data) into a `secrets_enc` column. Used for music
+ * sources (`sources`) and, with `table`, torrent indexer connections
+ * (`torrent_sources`).
  */
 export class EncryptedColumnSecretStore implements SecretStore {
+  readonly #table: string;
   constructor(
     private readonly db: Database,
     private readonly box: SecretBox,
-  ) {}
+    table: 'sources' | 'torrent_sources' = 'sources',
+  ) {
+    this.#table = table;
+  }
 
   async get(sourceId: string): Promise<Record<string, string>> {
-    const row = await this.db.get<{ secrets_enc: string | null }>('SELECT secrets_enc FROM sources WHERE id = ?', [sourceId]);
+    const row = await this.db.get<{ secrets_enc: string | null }>(`SELECT secrets_enc FROM ${this.#table} WHERE id = ?`, [sourceId]);
     return this.box.openJson(row?.secrets_enc ?? null, sourceId);
   }
 
   async set(sourceId: string, secrets: Record<string, string>): Promise<void> {
     const sealed = Object.keys(secrets).length ? this.box.sealJson(secrets, sourceId) : null;
-    await this.db.run('UPDATE sources SET secrets_enc = ? WHERE id = ?', [sealed, sourceId]);
+    await this.db.run(`UPDATE ${this.#table} SET secrets_enc = ? WHERE id = ?`, [sealed, sourceId]);
   }
 
   async delete(): Promise<void> {

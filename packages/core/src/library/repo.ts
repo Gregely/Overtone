@@ -79,6 +79,15 @@ export interface PlayableSource {
   mime: string | null;
 }
 
+/** Minimal metadata for a discovery ("Find sources") target. */
+export interface DiscoveryMetadata {
+  title: string;
+  artist: string | null;
+  album: string | null;
+  year: number | null;
+  durationMs: number | null;
+}
+
 /** What a cover URL is built from. */
 export interface CoverRef {
   releaseId: number;
@@ -491,6 +500,25 @@ export class LibraryRepo {
       [sourceFileId],
     );
     return row ? { file: row, enabled: row.source_enabled === 1 } : undefined;
+  }
+
+  async discoveryForTrack(id: number): Promise<DiscoveryMetadata | null> {
+    const row = await this.db.get<{ title: string; artist: string | null; album: string | null; year: number | null; duration_ms: number | null }>(
+      `SELECT t.title, t.artist_credit AS artist, r.title AS album, r.year, t.duration_ms
+       FROM tracks t LEFT JOIN releases r ON r.id = t.release_id WHERE t.id = ?`,
+      [id],
+    );
+    if (!row) return null;
+    return { title: row.title, artist: row.artist, album: row.album, year: row.year, durationMs: row.duration_ms };
+  }
+
+  async discoveryForAlbum(id: number): Promise<DiscoveryMetadata | null> {
+    const row = await this.db.get<{ title: string; artist: string | null; year: number | null }>(
+      'SELECT r.title, r.artist_credit AS artist, r.year FROM releases r WHERE r.id = ?',
+      [id],
+    );
+    if (!row) return null;
+    return { title: row.title, artist: row.artist, album: null, year: row.year, durationMs: null };
   }
 
   async stats(): Promise<HomeDto['stats']> {

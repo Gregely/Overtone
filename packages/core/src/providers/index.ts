@@ -14,6 +14,9 @@ export { ProviderRegistry } from './registry.js';
 export { ResolveCache } from './resolve-cache.js';
 export { createDebridPlugin } from './debrid/index.js';
 export type * from './debrid/types.js';
+export { DebridService } from './debrid/service.js';
+export type { CachedStatus, DebridCachedStatus, DebridProviderInfo } from './debrid/service.js';
+export * from './debrid/magnet.js';
 
 export interface BuiltinOptions {
   /** Registered Premiumize OAuth client id; enables "Log in with Premiumize". */

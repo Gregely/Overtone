@@ -98,3 +98,16 @@ export class MemoryBlobStore implements BlobStore {
     return [...this.#m.keys()];
   }
 }
+
+/**
+ * Namespace a SecretStore by prefixing every key. Lets two logical stores
+ * (e.g. music-source secrets and torrent-source secrets) share one underlying
+ * store without colliding.
+ */
+export function prefixedSecretStore(inner: SecretStore, prefix: string): SecretStore {
+  return {
+    get: (id) => inner.get(prefix + id),
+    set: (id, s) => inner.set(prefix + id, s),
+    delete: (id) => inner.delete(prefix + id),
+  };
+}

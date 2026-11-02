@@ -1,25 +1,51 @@
 /**
  * Debrid adapter interface.
  *
- * A DebridAdapter is a thin, read-only HTTP mapper for one debrid service.
- * It exposes what is ALREADY in the user's account (finished torrents /
- * downloads / cloud storage) and turns an item into a direct link on demand.
- *
- * Out of scope, by design — do not add:
- *   - adding torrents/magnets/links to the account
- *   - searching indexers or any third-party catalog
- *   - any other "find content" functionality
- *
- * Shared behaviour (audio filtering, credential checks, tag probing, mapping
- * to the generic SourceProvider interface) lives in the bridge, ./index.ts.
- * Link caching and re-resolution on expiry live in ../resolve-cache.ts and
- * apply to every provider.
+ * A DebridAdapter is a thin HTTP mapper for one debrid service. It lists what
+ * is ALREADY in the user's account (finished torrents / downloads / cloud
+ * storage) and turns an item into a direct link on demand. It is read-mostly:
+ * the optional `checkCached` / `addMagnet` / `getStatus` methods exist solely
+ * to let a user retrieve content they are authorised to access (their own
+ * account), and are only ever called after explicit user selection.
  *
  * Debrid links are always proxied by the server: they act as bearer
  * credentials and are frequently bound to the requesting IP.
  */
 
 import type { CallOptions, DeviceFlowHandler, ProviderContext, ResolveOptions } from '../types.js';
+
+/** A torrent identifier for cache checks: a magnet URI and/or an info hash. */
+export interface DebridTorrentRef {
+  magnet?: string;
+  infoHash?: string;
+}
+
+export interface DebridCachedFile {
+  name: string;
+  size: number;
+}
+
+export interface DebridCachedResult {
+  cached: boolean;
+  /** True when the provider could not give a definitive answer. */
+  unknown?: boolean;
+  /** Files the provider reports as cached (may be partial). */
+  files?: DebridCachedFile[];
+}
+
+export interface DebridAddResult {
+  /** Provider id for {@link DebridAdapter.getStatus}. */
+  id: string;
+  /** Human status string, e.g. "downloading", "finished". */
+  status: string;
+  /** True when the magnet was already cached and finished instantly. */
+  instant?: boolean;
+}
+
+export type DebridTorrentStatus =
+  | { status: 'processing'; progress: number | null }
+  | { status: 'finished' }
+  | { status: 'error'; message: string };
 
 export interface DebridAdapterDefinition {
   /** Provider id, kebab-case, e.g. "real-debrid". Persisted; never rename. */
@@ -43,6 +69,11 @@ export interface DebridAdapterDefinition {
    * re-resolved shortly before this elapses. Default: 1 hour.
    */
   defaultLinkTtlMs?: number;
+  /**
+   * Whether the adapter supports retrieval (check-cached / add-magnet /
+   * get-status) for "Find sources". When false, the UI greys the provider out.
+   */
+  retrieval?: boolean;
   /**
    * Build the adapter. `credentials` holds `apiKey` and any managedSecrets that
    * are set; at least one credential is guaranteed to be present.
@@ -69,6 +100,15 @@ export interface DebridAdapter {
    * removed from the account.
    */
   resolveLink(fileId: string, opts: ResolveOptions): Promise<DebridResolvedLink>;
+
+  /** Whether this magnet/infohash is already cached. Optional (not all providers expose it). */
+  checkCached?(ref: DebridTorrentRef, opts: CallOptions): Promise<DebridCachedResult>;
+
+  /** Submit a user-selected magnet; returns an id for {@link getStatus}. Optional. */
+  addMagnet?(magnet: string, opts: CallOptions): Promise<DebridAddResult>;
+
+  /** Poll a submitted torrent's processing status. Optional. */
+  getStatus?(id: string, opts: CallOptions): Promise<DebridTorrentStatus>;
 }
 
 export interface DebridFile {

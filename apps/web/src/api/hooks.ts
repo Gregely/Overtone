@@ -11,6 +11,11 @@ import type {
   ArtistDetailDto,
   ArtistDto,
   ConnectionTestResultDto,
+  DebridAddMagnetResultDto,
+  DebridProviderDto,
+  DebridTorrentStatusDto,
+  DiscoverRequestDto,
+  DiscoverResponseDto,
   HomeDto,
   LibraryInfoDto,
   LibraryFileDto,
@@ -23,6 +28,9 @@ import type {
   SearchResultDto,
   SourceDto,
   SourceWriteDto,
+  TorrentSourceDto,
+  TorrentSourceTestResultDto,
+  TorrentSourceWriteDto,
   TrackDto,
 } from '@overtone/shared';
 import { useApi, useIsAdmin } from '../app/context';
@@ -242,5 +250,74 @@ export function useLibraryInfo(enabled: boolean) {
     enabled,
     queryFn: () => api.get<LibraryInfoDto>('/api/library/info'),
     refetchInterval: (q) => (q.state.data?.scanning || q.state.data?.matching.pending ? 3000 : false),
+  });
+}
+
+// ── torrent sources ("Find sources" settings) ──────────────────────────────
+
+export function useTorrentSources() {
+  const api = useApi();
+  const admin = useIsAdmin();
+  return useQuery({ queryKey: ['torrentSources'], queryFn: () => api.get<TorrentSourceDto[]>('/api/torrent-sources'), enabled: admin });
+}
+
+export function useTorrentSource(id: string | undefined) {
+  const api = useApi();
+  return useQuery({ queryKey: ['torrentSources', id ?? ''], queryFn: () => api.get<TorrentSourceDto>(`/api/torrent-sources/${id}`), enabled: Boolean(id) });
+}
+
+export function useSaveTorrentSource() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id?: string; body: TorrentSourceWriteDto }) =>
+      id ? api.patch<TorrentSourceDto>(`/api/torrent-sources/${id}`, body) : api.post<TorrentSourceDto>('/api/torrent-sources', body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['torrentSources'] }),
+  });
+}
+
+export function useDeleteTorrentSource() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/torrent-sources/${id}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['torrentSources'] }),
+  });
+}
+
+export function useTestTorrentSource() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ id, body }: { id?: string; body: TorrentSourceWriteDto }) =>
+      id ? api.post<TorrentSourceTestResultDto>(`/api/torrent-sources/${id}/test`, body) : api.post<TorrentSourceTestResultDto>('/api/torrent-sources/test', body),
+  });
+}
+
+// ── discovery ("Find sources") ──────────────────────────────────────────────
+
+export function useDiscover() {
+  const api = useApi();
+  return useMutation({ mutationFn: (body: DiscoverRequestDto) => api.post<DiscoverResponseDto>('/api/discover', body) });
+}
+
+export function useDebridProviders() {
+  const api = useApi();
+  return useQuery({ queryKey: ['debridProviders'], queryFn: () => api.get<DebridProviderDto[]>('/api/debrid/providers') });
+}
+
+export function useAddMagnet() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ sourceId, magnet }: { sourceId: string; magnet: string }) => api.post<DebridAddMagnetResultDto>(`/api/debrid/${sourceId}/add-magnet`, { magnet }),
+  });
+}
+
+export function useTorrentStatus(sourceId: string | null, id: string | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['torrentStatus', sourceId ?? '', id ?? ''],
+    queryFn: () => api.get<DebridTorrentStatusDto>(`/api/debrid/${sourceId}/status/${id}`),
+    enabled: Boolean(sourceId && id),
+    refetchInterval: (q) => (q.state.data?.status === 'processing' ? 3000 : false),
   });
 }

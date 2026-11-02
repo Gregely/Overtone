@@ -54,7 +54,7 @@ describe('ProviderRegistry', () => {
     const [dto] = r.toDtos();
     expect(dto?.configSchema.fields.map((f) => f.key)).toEqual(['apiKey']);
     expect(dto?.configSchema.deviceLogin).toEqual({ label: 'Log in with X', replaces: ['apiKey', 'refreshToken'] });
-    expect(dto?.capabilities).toEqual({ watch: false, testConnection: true, deviceFlow: true, redirectable: false });
+    expect(dto?.capabilities).toEqual({ watch: false, testConnection: true, deviceFlow: true, redirectable: false, retrieval: false });
     // DTO must be plain JSON (no functions leaking through).
     expect(JSON.parse(JSON.stringify(dto))).toEqual(dto);
   });

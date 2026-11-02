@@ -17,6 +17,7 @@ import {
   createDefaultRegistry,
   createEmbeddedRouter,
   migrate,
+  prefixedSecretStore,
   sqlJsDriver,
   systemClock,
   type Clock,
@@ -50,6 +51,7 @@ export interface Standalone {
 interface Platform {
   db: Database;
   secrets: SecretStore;
+  torrentSecrets: SecretStore;
   blobs: DisplayableBlobStore;
   fetch?: HttpFetch;
   clock: Clock;
@@ -81,6 +83,7 @@ async function androidPlatform(): Promise<Platform> {
   return {
     db,
     secrets: new KeystoreSecretStore(SecureStorage),
+    torrentSecrets: prefixedSecretStore(new KeystoreSecretStore(SecureStorage), 'torrent.'),
     blobs: new AppFilesBlobStore(AppStorage, `${filesDir}/artwork`),
     fetch: createNativeFetch(),
     clock,
@@ -119,6 +122,7 @@ async function browserPlatform(): Promise<Platform> {
   return {
     db,
     secrets: new WebCryptoSecretStore(),
+    torrentSecrets: prefixedSecretStore(new WebCryptoSecretStore(), 'torrent.'),
     blobs: new ObjectUrlBlobStore(),
     clock: systemClock,
     local: [],
@@ -134,6 +138,7 @@ export async function openStandalone(): Promise<Standalone> {
   core = createCore({
     db: p.db,
     secrets: p.secrets,
+    torrentSecrets: p.torrentSecrets,
     blobs: p.blobs,
     registry: createDefaultRegistry({ local: p.local, premiumizeClientId: import.meta.env.VITE_PREMIUMIZE_CLIENT_ID ?? null }),
     clock: p.clock,

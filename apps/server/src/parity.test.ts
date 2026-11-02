@@ -165,6 +165,7 @@ describe.each(TEST_DATABASES)('HttpTransport vs EmbeddedTransport ($name)', (fac
       db: await factory.open(),
       registry,
       secrets: new MemorySecretStore(),
+      torrentSecrets: new MemorySecretStore(),
       blobs: new MemoryBlobStore(),
       mb: new FakeMusicBrainz([homework, discovery]),
       version: 'test',

@@ -10,8 +10,10 @@ import { registerWebApp } from './http/web-app.js';
 import { PROVIDER_ERROR_HTTP_STATUS, ProviderError } from '@overtone/core';
 import { accountRoutes, publicAuthRoutes } from './routes/auth.js';
 import { libraryRoutes } from './routes/library.js';
+import { discoverRoutes } from './routes/discover.js';
+import { debridRoutes } from './routes/debrid.js';
 import { mediaRoutes } from './routes/media.js';
-import { sourceRoutes } from './routes/sources.js';
+import { sourceRoutes, torrentSourceRoutes } from './routes/sources.js';
 import { createServices, type ServiceOverrides, type Services } from './services.js';
 import type { Logger } from '@overtone/core';
 
@@ -95,7 +97,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<{ app: FastifyIns
     authed.addHook('preHandler', requireAuth(services.auth));
     await accountRoutes(authed, services);
     await sourceRoutes(authed, services);
+    await torrentSourceRoutes(authed, services);
     await libraryRoutes(authed, services);
+    await discoverRoutes(authed, services);
+    await debridRoutes(authed, services);
   });
 
   return { app, services };

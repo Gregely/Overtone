@@ -53,6 +53,7 @@ export class ProviderRegistry {
         testConnection: Boolean(m.capabilities?.testConnection),
         deviceFlow: Boolean(m.deviceFlow),
         redirectable: Boolean(m.capabilities?.redirectable),
+        retrieval: Boolean(m.capabilities?.retrieval),
       },
     }));
   }

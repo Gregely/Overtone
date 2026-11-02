@@ -14,7 +14,7 @@ const provider: ProviderManifestDto = {
   name: 'Real-Debrid',
   description: 'Stream audio files already in your Real-Debrid account.',
   category: 'debrid',
-  capabilities: { watch: false, testConnection: true, deviceFlow: true, redirectable: false },
+  capabilities: { watch: false, testConnection: true, deviceFlow: true, redirectable: false, retrieval: false },
   configSchema: {
     fields: [
       { key: 'apiKey', type: 'secret', label: 'API key', required: false },

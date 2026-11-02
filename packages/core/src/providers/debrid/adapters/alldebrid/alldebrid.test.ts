@@ -141,4 +141,20 @@ describe('AllDebrid adapter', () => {
     http.on('POST', `${API}/v4/pin/check`, err('PIN_EXPIRED'));
     expect(await manifest.deviceFlow!.poll(start.handle, ctx)).toEqual({ status: 'expired' });
   });
+
+  it('checks cache availability from an info hash', async () => {
+    const http = mockHttp().on('POST', `${API}/v4/magnet/instant`, ok({ magnets: [{ magnet: 'magnet:?xt=urn:btih:aaa', hash: 'aaa', instant: true }] }));
+    const adapter = createAllDebridAdapter({ now: () => NOW, sleep: async () => undefined }).create({ apiKey: 'ad-key' }, createTestContext({ fetch: http.fetch }));
+    expect(await adapter.checkCached!({ infoHash: 'aaa' }, { signal })).toEqual({ cached: true });
+    expect(new URLSearchParams(http.to(`${API}/v4/magnet/instant`)[0]!.body!).get('magnets')).toContain('urn:btih:aaa');
+  });
+
+  it('adds a magnet (non-idempotent) and reports status', async () => {
+    const http = mockHttp()
+      .on('POST', `${API}/v4/magnet/upload`, ok({ magnets: [{ id: 202, hash: 'aaa' }] }))
+      .on('POST', `${API}/v4.1/magnet/status`, ok({ magnets: [{ id: 202, status: 4, statusCode: 'MAGNET_IS_READY' }] }));
+    const adapter = createAllDebridAdapter({ now: () => NOW, sleep: async () => undefined }).create({ apiKey: 'ad-key' }, createTestContext({ fetch: http.fetch }));
+    expect(await adapter.addMagnet!('magnet:?xt=urn:btih:aaa', { signal })).toEqual({ id: '202', status: 'queued' });
+    expect(await adapter.getStatus!('202', { signal })).toEqual({ status: 'finished' });
+  });
 });

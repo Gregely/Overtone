@@ -24,7 +24,8 @@ import { sha256Hex } from '../../../../crypto.js';
 import { ProviderError } from '../../../errors.js';
 import { form, readJson, send } from '../../../http.js';
 import type { CallOptions, DeviceFlowContext, DeviceFlowHandler, ProviderContext, ResolveOptions } from '../../../types.js';
-import type { DebridAccountInfo, DebridAdapter, DebridAdapterDefinition, DebridCredentials, DebridFile, DebridResolvedLink } from '../../types.js';
+import { refToInfoHash, refToMagnet } from '../../magnet.js';
+import type { DebridAccountInfo, DebridAdapter, DebridAdapterDefinition, DebridAddResult, DebridCachedResult, DebridCredentials, DebridFile, DebridResolvedLink, DebridTorrentRef, DebridTorrentStatus } from '../../types.js';
 
 export interface AllDebridOptions {
   apiBase?: string;
@@ -52,6 +53,7 @@ export function createAllDebridAdapter(opts: AllDebridOptions = {}): DebridAdapt
     id: 'alldebrid',
     name: 'AllDebrid',
     apiKeyUrl: 'https://alldebrid.com/apikeys/',
+    retrieval: true,
     deviceFlow: allDebridPinFlow(o),
     deviceLoginHelp: 'Shows a PIN to enter on alldebrid.com/pin. Overtone receives an API key you can revoke at any time.',
     create: (credentials, ctx) => new AllDebridAdapter(credentials, ctx, o),
@@ -65,7 +67,7 @@ async function call<T>(
   o: Required<AllDebridOptions>,
   path: string,
   what: string,
-  init: { signal: AbortSignal; method?: string; body?: URLSearchParams; apiKey?: string },
+  init: { signal: AbortSignal; method?: string; body?: URLSearchParams; apiKey?: string; idempotent?: boolean },
 ): Promise<T> {
   const res = await send(
     ctx,
@@ -75,8 +77,8 @@ async function call<T>(
       headers: init.apiKey ? { authorization: `Bearer ${init.apiKey}` } : {},
       ...(init.body ? { body: init.body } : {}),
       signal: init.signal,
-      // Every AllDebrid call we make is read-only (status, files, unlock, pin), so retries are safe.
-      idempotent: true,
+      // Read-only calls (status, files, unlock, pin) are safe to retry; adds are not.
+      idempotent: init.idempotent ?? true,
     },
     what,
   );
@@ -124,7 +126,7 @@ class AllDebridAdapter implements DebridAdapter {
     this.#o = o;
   }
 
-  #call<T>(path: string, what: string, init: { signal: AbortSignal; method?: string; body?: URLSearchParams }): Promise<T> {
+  #call<T>(path: string, what: string, init: { signal: AbortSignal; method?: string; body?: URLSearchParams; idempotent?: boolean }): Promise<T> {
     return call<T>(this.#ctx, this.#o, path, what, { ...init, apiKey: this.#key });
   }
 
@@ -193,6 +195,42 @@ class AllDebridAdapter implements DebridAdapter {
     return this.#unlock(accountLink, signal);
   }
 
+  async checkCached(ref: DebridTorrentRef, { signal }: CallOptions): Promise<DebridCachedResult> {
+    const magnet = refToMagnet(ref);
+    if (!magnet) return { cached: false, unknown: true };
+    const data = await this.#call<{ magnets?: Array<{ magnet?: string; hash?: string; instant?: boolean }> }>('/v4/magnet/instant', 'Check cache', {
+      signal,
+      method: 'POST',
+      body: form({ magnets: JSON.stringify([magnet]) }),
+    });
+    const m = data.magnets?.[0];
+    if (!m) return { cached: false, unknown: true };
+    return { cached: m.instant === true };
+  }
+
+  async addMagnet(magnet: string, { signal }: CallOptions): Promise<DebridAddResult> {
+    const data = await this.#call<{ magnets?: Array<{ id?: number; hash?: string; error?: { code: string; message?: string } }> }>('/v4/magnet/upload', 'Add magnet', {
+      signal,
+      method: 'POST',
+      body: form({ magnets: JSON.stringify([magnet]) }),
+      idempotent: false,
+    });
+    const m = data.magnets?.[0];
+    if (m?.error) throw new ProviderError('unavailable', `AllDebrid could not add the magnet (${m.error.code})`);
+    if (!m?.id) throw new ProviderError('unavailable', 'AllDebrid did not return a magnet id');
+    return { id: String(m.id), status: 'queued' };
+  }
+
+  async getStatus(id: string, { signal }: CallOptions): Promise<DebridTorrentStatus> {
+    const data = await this.#call<{ magnets?: Array<{ id?: number | string; status?: number; statusCode?: string }> }>('/v4.1/magnet/status', 'Check magnet', {
+      signal,
+      method: 'POST',
+      body: form({ id }),
+    });
+    const m = data.magnets?.find((x) => String(x.id) === String(id)) ?? data.magnets?.[0];
+    return mapAllDebridStatus(m?.status);
+  }
+
   /** Only called with links taken from the user's own magnets / saved links. */
   async #unlock(link: string, signal: AbortSignal): Promise<DebridResolvedLink> {
     const data = await this.#call<{ link?: string; filesize?: number; delayed?: number }>('/v4/link/unlock', 'Get stream link', {
@@ -225,6 +263,13 @@ export function flatten(nodes: FileNode[], prefix = ''): Array<{ path: string; n
 }
 
 const hash = async (s: string) => (await sha256Hex(s)).slice(0, 24);
+
+/** AllDebrid magnet status → normalized status (0 processing, 1 downloading, 2 error, 3 uploading, 4 ready). */
+export function mapAllDebridStatus(status: number | undefined): DebridTorrentStatus {
+  if (status === 4) return { status: 'finished' };
+  if (status === 2) return { status: 'error', message: 'AllDebrid could not process the magnet' };
+  return { status: 'processing', progress: null };
+}
 
 // ── PIN login ───────────────────────────────────────────────────────────────
 

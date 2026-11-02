@@ -160,4 +160,17 @@ export const migrations: readonly string[] = [
     value_json TEXT NOT NULL
   );
   `,
+  /* 3: torrent indexer connections ("Find sources"), kept separate from music sources and debrid providers */ `
+  CREATE TABLE torrent_sources (
+    id           TEXT    PRIMARY KEY,
+    kind         TEXT    NOT NULL CHECK (kind IN ('torznab', 'prowlarr', 'jackett')),
+    name         TEXT    NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    url          TEXT    NOT NULL,
+    config_json  TEXT    NOT NULL DEFAULT '{}',
+    secrets_enc  TEXT,
+    created_at   INTEGER NOT NULL,
+    last_error   TEXT
+  );
+  `,
 ];

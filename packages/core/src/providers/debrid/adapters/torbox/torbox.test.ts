@@ -139,4 +139,24 @@ describe('TorBox adapter', () => {
     http.on('POST', `${API}/user/auth/device/token`, fail('ITEM_NOT_FOUND', 400));
     expect(await manifest.deviceFlow!.poll('DC', ctx)).toEqual({ status: 'expired' });
   });
+
+  it('checks cache availability and reports uncached when empty', async () => {
+    const http = mockHttp().on('GET', `${API}/torrents/checkcached`, ok([{ name: 'track.flac', size: 100 }]));
+    const adapter = createTorBoxAdapter({ now: () => NOW }).create({ apiKey: 'tb-key' }, createTestContext({ fetch: http.fetch }));
+    expect(await adapter.checkCached!({ infoHash: 'aaaa' }, { signal })).toEqual({ cached: true, files: [{ name: 'track.flac', size: 100 }] });
+    expect(http.calls[0]!.url.searchParams.get('hash')).toBe('aaaa');
+
+    http.on('GET', `${API}/torrents/checkcached`, ok(null));
+    expect(await adapter.checkCached!({ infoHash: 'bbbb' }, { signal })).toEqual({ cached: false });
+  });
+
+  it('adds a magnet (JSON, non-idempotent) and reports finished status', async () => {
+    const http = mockHttp()
+      .on('POST', `${API}/torrents/createtorrent`, ok({ torrent_id: 33, hash: 'aaaa' }))
+      .on('GET', `${API}/torrents/mylist`, ok([{ id: 33, name: 'Album', download_finished: true, download_present: true, files: [] }]));
+    const adapter = createTorBoxAdapter({ now: () => NOW }).create({ apiKey: 'tb-key' }, createTestContext({ fetch: http.fetch }));
+    expect(await adapter.addMagnet!('magnet:?xt=urn:btih:aaaa', { signal })).toEqual({ id: '33', status: 'queued' });
+    expect(JSON.parse(http.to(`${API}/torrents/createtorrent`)[0]!.body!)).toEqual({ magnet: 'magnet:?xt=urn:btih:aaaa' });
+    expect(await adapter.getStatus!('33', { signal })).toEqual({ status: 'finished' });
+  });
 });
