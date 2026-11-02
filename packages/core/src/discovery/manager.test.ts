@@ -32,7 +32,7 @@ describe('searchEndpoint', () => {
   it('maps each kind to its Torznab endpoint', () => {
     expect(searchEndpoint('torznab', 'https://indexer/api')).toBe('https://indexer/api');
     expect(searchEndpoint('prowlarr', 'http://localhost:9696')).toBe('http://localhost:9696/api/v1/search');
-    expect(searchEndpoint('jackett', 'http://localhost:9117')).toBe('http://localhost:9117/api/v2.0/indexers/all/results/torznab');
+    expect(searchEndpoint('jackett', 'http://localhost:9117')).toBe('http://localhost:9117/api/v2.0/indexers/all/results/torznab/api');
   });
 });
 
@@ -112,5 +112,31 @@ describe('TorrentSourceManager', () => {
     const { manager } = await makeManager({ fetch: mock.fetch });
     const result = await manager.test(undefined, { kind: 'torznab', url: 'https://indexer/api', apiKey: 'bad' });
     expect(result.ok).toBe(false);
+  });
+
+  it('tests a Jackett source against its Torznab endpoint and discovers indexers', async () => {
+    const mock = mockHttp().on('GET', /torznab\/api/, (req) =>
+      req.url.searchParams.get('t') === 'search'
+        ? new Response('<?xml version="1.0"?><rss><channel><title>Jackett</title></channel></rss>', { headers: { 'content-type': 'application/xml' } })
+        : new Response('<?xml version="1.0"?><indexers><indexer id="idx1" title="One"/></indexers>', { headers: { 'content-type': 'application/xml' } }),
+    );
+    const { manager } = await makeManager({ fetch: mock.fetch });
+
+    const result = await manager.test(undefined, { kind: 'jackett', url: 'http://127.0.0.1:9117', apiKey: 'jackett-key' });
+
+    expect(result.ok).toBe(true);
+    expect(result.indexers).toEqual([{ id: 'idx1', name: 'One', categories: [], enabled: true }]);
+    // Both the probe search and the indexer list hit the corrected Torznab endpoint.
+    expect(mock.calls.every((c) => c.url.pathname === '/api/v2.0/indexers/all/results/torznab/api')).toBe(true);
+    expect(mock.calls.every((c) => c.url.searchParams.get('apikey') === 'jackett-key')).toBe(true);
+    expect(mock.calls.map((c) => c.url.searchParams.get('t')).sort()).toEqual(['indexers', 'search']);
+  });
+
+  it('reports an invalid Jackett key as auth', async () => {
+    const mock = mockHttp().on('GET', /torznab\/api/, () => new Response('unauthorized', { status: 401 }));
+    const { manager } = await makeManager({ fetch: mock.fetch });
+    const result = await manager.test(undefined, { kind: 'jackett', url: 'http://127.0.0.1:9117', apiKey: 'bad' });
+    expect(result.ok).toBe(false);
+    expect(result.message.toLowerCase()).toContain('rejected');
   });
 });

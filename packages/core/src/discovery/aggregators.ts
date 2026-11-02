@@ -8,6 +8,7 @@
 import { ProviderError } from '../providers/errors.js';
 import { readJson, send } from '../providers/http.js';
 import type { IndexerContext, TorrentIndexerDescriptor } from './types.js';
+import { attr, children, parseXml } from './xml.js';
 
 /** Prowlarr: `GET {base}/api/v1/indexer` (X-Api-Key header) → JSON array. */
 export async function listProwlarrIndexers(base: string, apiKey: string, ctx: IndexerContext): Promise<TorrentIndexerDescriptor[]> {
@@ -32,12 +33,12 @@ export async function listProwlarrIndexers(base: string, apiKey: string, ctx: In
     }));
 }
 
-/** Jackett: `GET {base}/api/v2.0/indexers/all/results?apikey=` → `{ Indexers: [...] }`. */
+/** Jackett: `GET {base}/api/v2.0/indexers/all/results/torznab/api?apikey=&t=indexers` → `<indexers><indexer id title>…`. */
 export async function listJackettIndexers(base: string, apiKey: string, ctx: IndexerContext): Promise<TorrentIndexerDescriptor[]> {
   const res = await send(
     ctx,
-    `${base}/api/v2.0/indexers/all/results?apikey=${encodeURIComponent(apiKey)}`,
-    { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20_000) },
+    `${base}/api/v2.0/indexers/all/results/torznab/api?apikey=${encodeURIComponent(apiKey)}&t=indexers`,
+    { headers: { accept: 'application/xml, text/xml, */*' }, signal: AbortSignal.timeout(20_000) },
     'List Jackett indexers',
   );
   if (!res.ok) {
@@ -45,8 +46,17 @@ export async function listJackettIndexers(base: string, apiKey: string, ctx: Ind
     if (res.status === 401 || res.status === 403) throw new ProviderError('auth', 'Jackett rejected the API key');
     throw new ProviderError('unavailable', `Jackett returned HTTP ${res.status}`);
   }
-  const data = await readJson<{ Indexers?: Array<{ ID?: string; Name?: string }> }>(res, 'List Jackett indexers');
-  return (data.Indexers ?? [])
-    .filter((i) => i.ID)
-    .map((i) => ({ id: String(i.ID), name: i.Name ?? String(i.ID), categories: [] }));
+  const text = await res.text();
+  let root;
+  try {
+    root = parseXml(text);
+  } catch {
+    throw new ProviderError('unavailable', 'Jackett returned an unexpected response (not Torznab XML)');
+  }
+  return children(root, 'indexer')
+    .map((i) => {
+      const id = attr(i, 'id') ?? '';
+      return { id, name: attr(i, 'title') ?? id, categories: [] };
+    })
+    .filter((i) => i.id);
 }

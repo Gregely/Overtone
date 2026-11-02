@@ -16,7 +16,7 @@ import type { Clock, HttpFetch, SecretStore } from '../platform/types.js';
 import { createProviderFetch } from '../providers/fetch.js';
 import { ProviderError } from '../providers/errors.js';
 import { listJackettIndexers, listProwlarrIndexers } from './aggregators.js';
-import type { IndexerContext, TorrentIndexer, TorrentIndexerDescriptor } from './types.js';
+import type { IndexerContext, TorrentIndexer, TorrentIndexerDescriptor, TorrentIndexerTestResult } from './types.js';
 import type { TorrentIndexerRegistry } from './registry.js';
 
 export interface TorrentSourceRow {
@@ -184,7 +184,14 @@ export class TorrentSourceManager {
     const indexerIds = id ? enabledIndexerIds(parseConfig(row!.config_json)) : [];
 
     const indexer = this.#registry(kind).create({ url: searchEndpoint(kind, url), apiKey, ...(indexerIds.length ? { indexerIds } : {}) }, this.#ctx(row?.id ?? 'test', () => [apiKey]));
-    const result = indexer.testConnection ? await indexer.testConnection() : { ok: true, message: 'Connected' };
+    let result: TorrentIndexerTestResult;
+    try {
+      result = indexer.testConnection ? await indexer.testConnection() : { ok: true, message: 'Connected' };
+    } catch (err) {
+      if (err instanceof ProviderError) result = { ok: false, message: err.message };
+      else if ((err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError') result = { ok: false, message: 'Timed out reaching the indexer' };
+      else result = { ok: false, message: `Couldn't test the connection (${(err as Error)?.message ?? 'unknown error'})` };
+    }
 
     let indexers: TorrentIndexerInfoDto[] | undefined;
     if (kind !== 'torznab' && apiKey) {
@@ -253,7 +260,8 @@ export function searchEndpoint(kind: TorrentSourceKind, url: string): string {
     case 'prowlarr':
       return `${url}/api/v1/search`;
     case 'jackett':
-      return `${url}/api/v2.0/indexers/all/results/torznab`;
+      // Jackett's Torznab endpoint ends in "/api"; query params (t=search, apikey, …) follow it.
+      return `${url}/api/v2.0/indexers/all/results/torznab/api`;
     default:
       return url;
   }

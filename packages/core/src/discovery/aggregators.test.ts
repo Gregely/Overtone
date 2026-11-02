@@ -27,18 +27,29 @@ describe('listProwlarrIndexers', () => {
 });
 
 describe('listJackettIndexers', () => {
-  it('maps the Indexers array and sends the api key as a query param', async () => {
-    const http = mockHttp().on('GET', /all\/results/, json({ Indexers: [{ ID: 'idx1', Name: 'One' }, { ID: 'idx2', Name: 'Two' }] }));
+  it('fetches the Torznab t=indexers endpoint and parses the XML', async () => {
+    const http = mockHttp().on('GET', /torznab\/api/, () =>
+      new Response('<?xml version="1.0"?><indexers><indexer id="idx1" title="One"/><indexer id="idx2" title="Two"/></indexers>', {
+        headers: { 'content-type': 'application/xml' },
+      }),
+    );
     const idx = await listJackettIndexers('http://jackett:9117', 'key', ctx(http.fetch));
     expect(idx).toEqual([
       { id: 'idx1', name: 'One', categories: [] },
       { id: 'idx2', name: 'Two', categories: [] },
     ]);
+    expect(http.calls[0]!.url.pathname).toBe('/api/v2.0/indexers/all/results/torznab/api');
     expect(http.calls[0]!.url.searchParams.get('apikey')).toBe('key');
+    expect(http.calls[0]!.url.searchParams.get('t')).toBe('indexers');
   });
 
   it('maps a rejected key to an auth error', async () => {
-    const http = mockHttp().on('GET', /all\/results/, () => new Response('no', { status: 403 }));
+    const http = mockHttp().on('GET', /torznab\/api/, () => new Response('no', { status: 403 }));
     await expect(listJackettIndexers('http://jackett:9117', 'bad', ctx(http.fetch))).rejects.toMatchObject({ code: 'auth' });
+  });
+
+  it('maps a non-XML response to unavailable', async () => {
+    const http = mockHttp().on('GET', /torznab\/api/, () => new Response('this is not xml', { headers: { 'content-type': 'text/plain' } }));
+    await expect(listJackettIndexers('http://jackett:9117', 'key', ctx(http.fetch))).rejects.toMatchObject({ code: 'unavailable' });
   });
 });
