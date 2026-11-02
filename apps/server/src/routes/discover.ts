@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import type { DiscoverRequestDto } from '@overtone/shared';
+import type { DiscoverRequestDto, DiscoveryPreferencesDto } from '@overtone/shared';
+import { userOf } from '../http/auth-hooks.js';
 import type { Services } from '../services.js';
 
 const discoverBody = {
@@ -24,10 +25,32 @@ const discoverBody = {
   },
 } as const;
 
+const preferencesBody = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    preferredFormat: { type: 'string', enum: ['any', 'flac', 'mp3'] },
+    minBitrateKbps: { type: ['integer', 'null'], minimum: 0, maximum: 1000 },
+    preferredProvider: { type: 'string', maxLength: 64 },
+    rememberLastProvider: { type: 'boolean' },
+    prioritizeCached: { type: 'boolean' },
+    hideUncached: { type: 'boolean' },
+    searchScope: { type: 'string', enum: ['auto', 'track', 'album'] },
+  },
+} as const;
+
 /**
- * "Find sources": search configured torrent indexers for a track or album.
- * Available to any signed-in user (it only searches; it changes nothing).
+ * "Find sources" and discovery preferences. Discovery is available to any
+ * signed-in user (it only searches); preferences are stored per user.
  */
 export async function discoverRoutes(app: FastifyInstance, s: Services): Promise<void> {
-  app.post<{ Body: DiscoverRequestDto }>('/api/discover', { schema: { body: discoverBody } }, async (req) => s.api.discover(req.body));
+  app.post<{ Body: DiscoverRequestDto }>('/api/discover', { schema: { body: discoverBody } }, async (req) =>
+    s.api.discover(req.body, userOf(req).id),
+  );
+
+  app.get('/api/preferences', async (req) => s.api.getPreferences(userOf(req).id));
+
+  app.put<{ Body: DiscoveryPreferencesDto }>('/api/preferences', { schema: { body: preferencesBody } }, async (req) =>
+    s.api.setPreferences(userOf(req).id, req.body),
+  );
 }

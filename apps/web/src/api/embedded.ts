@@ -62,6 +62,9 @@ export class EmbeddedTransport implements ApiClient {
   patch<T>(path: string, body: unknown): Promise<T> {
     return this.request<T>('PATCH', path, { body });
   }
+  put<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>('PUT', path, { body });
+  }
   delete<T = void>(path: string): Promise<T> {
     return this.request<T>('DELETE', path, {});
   }

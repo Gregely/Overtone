@@ -9,6 +9,7 @@ import { TorrentIndexerRegistry } from './registry.js';
 import { DiscoveryService } from './service.js';
 import type { IndexerHit, TorrentIndexerDefinition } from './types.js';
 import type { DiscoveryTarget } from './query-builder.js';
+import type { DebridService } from '../providers/debrid/service.js';
 
 const target: DiscoveryTarget = { scope: 'album', title: 'Led Zeppelin IV', artist: 'Led Zeppelin', album: 'Led Zeppelin IV', year: 1971 };
 
@@ -39,12 +40,12 @@ function fakeRegistry(handler: Handler): TorrentIndexerRegistry {
   return registry;
 }
 
-async function setup(handler: Handler, cacheTtlMs = 60_000) {
+async function setup(handler: Handler, cacheTtlMs = 60_000, debrid?: DebridService) {
   const db = createDatabase(syncHandleDriver(new Sqlite(':memory:')));
   await migrate(db);
   const secrets = new MemorySecretStore();
   const manager = new TorrentSourceManager({ db, registry: fakeRegistry(handler), secrets, logger: silentLogger, userAgent: 'Overtone/test' });
-  const service = new DiscoveryService({ sources: manager, logger: silentLogger, cacheTtlMs });
+  const service = new DiscoveryService({ sources: manager, logger: silentLogger, cacheTtlMs, ...(debrid ? { debrid } : {}) });
   return { db, secrets, manager, service };
 }
 
@@ -140,5 +141,34 @@ describe('DiscoveryService', () => {
     const res = await service.discover(target);
     expect(res.results).toEqual([]);
     expect(res.errors).toEqual([]);
+  });
+
+  it('applies cached-release preferences (hide uncached, prioritise cached)', async () => {
+    const cachedHash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const stubDebrid = {
+      async listProviders() {
+        return [{ sourceId: 'ad', name: 'AllDebrid', providerId: 'alldebrid', retrieval: true }];
+      },
+      async checkCached(ref: { infoHash?: string }) {
+        return [{ providerId: 'ad', providerName: 'AllDebrid', status: ref.infoHash === cachedHash ? ('cached' as const) : ('uncached' as const) }];
+      },
+    } as unknown as DebridService;
+
+    const handler: Handler = () => [
+      hit({ title: 'Led Zeppelin - Led Zeppelin IV FLAC', infoHash: cachedHash, seeders: 5 }),
+      hit({ title: 'Led Zeppelin - Led Zeppelin IV FLAC', infoHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', seeders: 5 }),
+    ];
+    const { manager, service } = await setup(handler, 60_000, stubDebrid);
+    await manager.create({ kind: 'torznab', name: 'A', url: 'http://a' });
+
+    const all = await service.discover(target);
+    expect(all.results).toHaveLength(2);
+
+    const hidden = await service.discover(target, { hideUncached: true });
+    expect(hidden.results).toHaveLength(1);
+    expect(hidden.results[0]!.cached[0]!.status).toBe('cached');
+
+    const prioritised = await service.discover(target, { prioritizeCached: true });
+    expect(prioritised.results[0]!.infoHash).toBe(cachedHash);
   });
 });

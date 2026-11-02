@@ -66,6 +66,7 @@ export interface ApiClient {
   get<T>(path: string, query?: Record<string, string | number | boolean | undefined | null>, signal?: AbortSignal): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
   patch<T>(path: string, body: unknown): Promise<T>;
+  put<T>(path: string, body: unknown): Promise<T>;
   delete<T = void>(path: string): Promise<T>;
   request<T>(method: string, path: string, opts: { body?: unknown; signal?: AbortSignal }): Promise<T>;
   /** Absolute URL for a media path returned by the API (stream links, cover art). */
@@ -267,6 +268,9 @@ export class HttpTransport implements ApiClient {
   }
   patch<T>(path: string, body: unknown): Promise<T> {
     return this.request<T>('PATCH', path, { body });
+  }
+  put<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>('PUT', path, { body });
   }
   delete<T = void>(path: string): Promise<T> {
     return this.request<T>('DELETE', path, {});

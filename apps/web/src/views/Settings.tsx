@@ -9,6 +9,7 @@ import { getTheme, setTheme, type ThemePref } from '../theme';
 import { Icon } from '../ui/Icon';
 import { errorMessage } from '../ui/states';
 import { ServerField } from './Auth';
+import { DiscoverySettings } from './DiscoverySettings';
 import { LibrarySettings, ModeSettings } from './LibrarySettings';
 
 export function SettingsView() {
@@ -40,6 +41,8 @@ export function SettingsView() {
           </div>
         </section>
       )}
+
+      {admin && <DiscoverySettings />}
 
       <ModeSettings />
 

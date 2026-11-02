@@ -20,6 +20,7 @@ import { systemClock, type BlobStore, type Clock, type HttpFetch, type SecretSto
 import { createDefaultRegistry, type BuiltinOptions } from './providers/index.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { DebridService } from './providers/debrid/service.js';
+import { PreferencesService } from './preferences.js';
 import { ResolveCache } from './providers/resolve-cache.js';
 import { DeviceLoginService } from './sources/device-login.js';
 import { SourceManager } from './sources/manager.js';
@@ -62,6 +63,7 @@ export interface OvertoneCore {
   torrentSources: TorrentSourceManager;
   discovery: DiscoveryService;
   debrid: DebridService;
+  preferences: PreferencesService;
   sources: SourceManager;
   deviceLogins: DeviceLoginService;
   library: LibraryRepo;
@@ -117,6 +119,7 @@ export function createCore(o: CoreOptions): OvertoneCore {
     ...fetchOpt,
   });
   const debrid = new DebridService({ sources, registry, logger, clock });
+  const preferences = new PreferencesService(o.db);
   const discovery = new DiscoveryService({ sources: torrentSources, logger, clock, debrid });
   const deviceLogins = new DeviceLoginService({ registry, logger, userAgent, now, ...fetchOpt });
   const library = new LibraryRepo(o.db, now);
@@ -156,7 +159,7 @@ export function createCore(o: CoreOptions): OvertoneCore {
     ...fetchOpt,
   });
   covers = new CoverArtService({ blobs: o.blobs, library, sources, logger, userAgent, now, ...(o.coverArtUrl ? { baseUrl: o.coverArtUrl } : {}), ...fetchOpt });
-  const api = new CoreApi({ registry, sources, torrentSources, discovery, debrid, deviceLogins, library, mb, matcher, scanner, matchWorker, covers });
+  const api = new CoreApi({ registry, sources, torrentSources, discovery, debrid, preferences, deviceLogins, library, mb, matcher, scanner, matchWorker, covers });
 
   // Config changes invalidate cached stream links for that source.
   sources.onChange((e) => resolver.invalidate(e.sourceId));
@@ -168,6 +171,7 @@ export function createCore(o: CoreOptions): OvertoneCore {
     torrentSources,
     discovery,
     debrid,
+    preferences,
     sources,
     deviceLogins,
     library,

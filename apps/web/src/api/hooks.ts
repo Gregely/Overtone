@@ -16,6 +16,7 @@ import type {
   DebridTorrentStatusDto,
   DiscoverRequestDto,
   DiscoverResponseDto,
+  DiscoveryPreferencesDto,
   HomeDto,
   LibraryInfoDto,
   LibraryFileDto,
@@ -302,7 +303,8 @@ export function useDiscover() {
 
 export function useDebridProviders() {
   const api = useApi();
-  return useQuery({ queryKey: ['debridProviders'], queryFn: () => api.get<DebridProviderDto[]>('/api/debrid/providers') });
+  const admin = useIsAdmin();
+  return useQuery({ queryKey: ['debridProviders'], queryFn: () => api.get<DebridProviderDto[]>('/api/debrid/providers'), enabled: admin });
 }
 
 export function useAddMagnet() {
@@ -319,5 +321,21 @@ export function useTorrentStatus(sourceId: string | null, id: string | null) {
     queryFn: () => api.get<DebridTorrentStatusDto>(`/api/debrid/${sourceId}/status/${id}`),
     enabled: Boolean(sourceId && id),
     refetchInterval: (q) => (q.state.data?.status === 'processing' ? 3000 : false),
+  });
+}
+
+// ── discovery preferences ──────────────────────────────────────────────────
+
+export function usePreferences() {
+  const api = useApi();
+  return useQuery({ queryKey: ['preferences'], queryFn: () => api.get<DiscoveryPreferencesDto>('/api/preferences') });
+}
+
+export function useSavePreferences() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DiscoveryPreferencesDto) => api.put<DiscoveryPreferencesDto>('/api/preferences', body),
+    onSuccess: (data) => qc.setQueryData(['preferences'], data),
   });
 }

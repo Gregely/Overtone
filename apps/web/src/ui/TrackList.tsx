@@ -84,7 +84,7 @@ export function TrackList({ tracks, onPlay, numbered = false, showAlbum = true, 
         }}
       />
       {fixFor && <FixMatchDialog track={fixFor} onClose={() => setFixFor(null)} />}
-      {findFor && <FindSourcesDialog target={{ kind: 'track', id: findFor.id, title: findFor.title }} onClose={() => setFindFor(null)} />}
+      {findFor && <FindSourcesDialog target={{ kind: 'track', id: findFor.id, albumId: findFor.album?.id, title: findFor.title }} onClose={() => setFindFor(null)} />}
     </>
   );
 }

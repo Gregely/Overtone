@@ -51,7 +51,7 @@ describe('LocalFolder', () => {
 
   it('resolves to a file:// URL inside the root', async () => {
     const s = await make().resolveStream('Artist/Album/01 - One.mp3', { signal });
-    expect(fileURLToPath(s.url)).toMatch(/Artist\/Album\/01 - One\.mp3$/);
+    expect(fileURLToPath(s.url).replaceAll(path.sep, '/')).toMatch(/Artist\/Album\/01 - One\.mp3$/);
     expect(s).toMatchObject({ mimeType: 'audio/mpeg', redirectSafe: false });
   });
 

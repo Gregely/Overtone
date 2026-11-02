@@ -18,6 +18,7 @@ import type {
   DiscoverRequestDto,
   DiscoverResponseDto,
   DiscoverScope,
+  DiscoveryPreferencesDto,
   FileMatchRequestDto,
   LibraryFileDto,
   MatchCandidateDto,
@@ -45,6 +46,7 @@ import type { TorrentSourceManager } from '../discovery/manager.js';
 import type { DiscoveryService } from '../discovery/service.js';
 import type { DiscoveryTarget } from '../discovery/query-builder.js';
 import type { DebridService } from '../providers/debrid/service.js';
+import type { PreferencesService } from '../preferences.js';
 import type { DeviceLoginService } from '../sources/device-login.js';
 import type { SourceManager } from '../sources/manager.js';
 
@@ -54,6 +56,7 @@ export interface CoreApiDeps {
   torrentSources: TorrentSourceManager;
   discovery: DiscoveryService;
   debrid: DebridService;
+  preferences: PreferencesService;
   deviceLogins: DeviceLoginService;
   library: LibraryRepo;
   mb: MusicBrainzApi;
@@ -314,9 +317,15 @@ export class CoreApi {
   }
 
   /** "Find sources": resolve the target metadata and run discovery across enabled indexers. */
-  async discover(body: DiscoverRequestDto): Promise<DiscoverResponseDto> {
+  async discover(body: DiscoverRequestDto, userId: number): Promise<DiscoverResponseDto> {
     const target = await this.#discoverTarget(body);
-    return this.s.discovery.discover(target);
+    const prefs = await this.s.preferences.get(userId);
+    return this.s.discovery.discover(target, {
+      preferredFormat: prefs.preferredFormat === 'any' ? undefined : prefs.preferredFormat,
+      minBitrateKbps: prefs.minBitrateKbps ?? undefined,
+      prioritizeCached: prefs.prioritizeCached,
+      hideUncached: prefs.hideUncached,
+    });
   }
 
   async #discoverTarget(body: DiscoverRequestDto): Promise<DiscoveryTarget> {
@@ -354,6 +363,16 @@ export class CoreApi {
 
   async torrentStatus(sourceId: string, id: string): Promise<DebridTorrentStatusDto> {
     return this.s.debrid.getStatus(sourceId, id);
+  }
+
+  // ── Discovery preferences ─────────────────────────────────────────────────
+
+  getPreferences(userId: number): Promise<DiscoveryPreferencesDto> {
+    return this.s.preferences.get(userId);
+  }
+
+  setPreferences(userId: number, body: DiscoveryPreferencesDto): Promise<DiscoveryPreferencesDto> {
+    return this.s.preferences.set(userId, body);
   }
 
   // ── Scanning ─────────────────────────────────────────────────────────────

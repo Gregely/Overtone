@@ -12,6 +12,7 @@ export * from './platform/types.js';
 export * from './errors.js';
 export * from './logging.js';
 export * from './crypto.js';
+export * from './preferences.js';
 
 export * from './providers/index.js';
 export * from './providers/http.js';

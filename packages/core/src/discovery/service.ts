@@ -74,6 +74,14 @@ interface ResolvedDeps {
 
 const PER_QUERY_CAP = 200;
 
+/** Preferences applied to ranking and result filtering (see DiscoveryPreferencesDto). */
+export interface DiscoveryOptions extends RankPreferences {
+  /** Give already-cached releases a small ranking advantage. */
+  prioritizeCached?: boolean;
+  /** Hide releases that no connected provider has cached. */
+  hideUncached?: boolean;
+}
+
 export class DiscoveryService {
   readonly #d: ResolvedDeps;
   readonly #cache = new Map<string, CacheEntry>();
@@ -102,12 +110,12 @@ export class DiscoveryService {
     return this.#d.clock?.now() ?? Date.now();
   }
 
-  async discover(target: DiscoveryTarget, prefs: RankPreferences = {}): Promise<DiscoverResponseDto> {
-    const key = cacheKey(target, this.#d.maxResults);
+  async discover(target: DiscoveryTarget, opts: DiscoveryOptions = {}): Promise<DiscoverResponseDto> {
+    const key = cacheKey(target, this.#d.maxResults, opts);
     const cached = this.#cache.get(key);
     if (cached && cached.expiresAt > this.#now()) return cached.value;
 
-    const value = await this.#search(target, prefs);
+    const value = await this.#search(target, opts);
     this.#set(key, value);
     return value;
   }
@@ -121,7 +129,7 @@ export class DiscoveryService {
     }
   }
 
-  async #search(target: DiscoveryTarget, prefs: RankPreferences): Promise<DiscoverResponseDto> {
+  async #search(target: DiscoveryTarget, opts: DiscoveryOptions): Promise<DiscoverResponseDto> {
     const queries = buildQueries(target).slice(0, this.#d.maxQueries);
     const sources = dedupeByUrl(await this.#d.sources.list()).filter((s) => s.enabled === 1);
 
@@ -136,9 +144,10 @@ export class DiscoveryService {
         if (r.status === 'fulfilled') all.push(...r.value);
         else errors.push({ sourceId: s.id, name: s.name, message: errorMessage(r.reason) });
       }
-      if (this.#enough(all, target, prefs)) break;
+      if (this.#enough(all, target, opts)) break;
     }
 
+    const ranked = this.#applyCachedPrefs(await this.#annotateCached(this.#rank(all, target, opts)), opts);
     return {
       query: {
         scope: target.scope,
@@ -147,7 +156,7 @@ export class DiscoveryService {
         ...(target.album ? { album: target.album } : {}),
         ...(target.year ? { year: target.year } : {}),
       },
-      results: (await this.#annotateCached(this.#rank(all, target, prefs))).slice(0, this.#d.maxResults),
+      results: ranked.slice(0, this.#d.maxResults),
       errors: dedupeErrors(errors),
     };
   }
@@ -222,6 +231,20 @@ export class DiscoveryService {
     });
     return ranked;
   }
+
+  /** Apply cached-release preferences: a small ranking bonus and/or filtering. */
+  #applyCachedPrefs(ranked: DiscoverResultDto[], opts: DiscoveryOptions): DiscoverResultDto[] {
+    const isCached = (r: DiscoverResultDto) => r.cached.some((c) => c.status === 'cached');
+    let out = ranked;
+    if (opts.hideUncached && ranked.some(isCached)) {
+      out = ranked.filter(isCached);
+    }
+    if (opts.prioritizeCached) {
+      for (const r of out) if (isCached(r)) r.score = Math.min(1, Math.round((r.score + 0.03) * 1000) / 1000);
+      out.sort((a, b) => b.score - a.score || (b.seeders ?? -1) - (a.seeders ?? -1) || a.title.localeCompare(b.title));
+    }
+    return out;
+  }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -257,8 +280,19 @@ function dedupeByUrl(rows: TorrentSourceRow[]): TorrentSourceRow[] {
   return rows.filter((r) => (seen.has(r.url) ? false : (seen.add(r.url), true)));
 }
 
-function cacheKey(target: DiscoveryTarget, limit: number): string {
-  return [target.scope, normalize(target.title), normalize(target.artist ?? ''), normalize(target.album ?? ''), target.year ?? '', limit].join('\u0000');
+function cacheKey(target: DiscoveryTarget, limit: number, opts: DiscoveryOptions): string {
+  return [
+    target.scope,
+    normalize(target.title),
+    normalize(target.artist ?? ''),
+    normalize(target.album ?? ''),
+    target.year ?? '',
+    limit,
+    opts.preferredFormat ?? '',
+    opts.minBitrateKbps ?? '',
+    opts.prioritizeCached ? '1' : '0',
+    opts.hideUncached ? '1' : '0',
+  ].join('\u0000');
 }
 
 function dedupeErrors(errors: DiscoverResponseDto['errors']): DiscoverResponseDto['errors'] {

@@ -170,3 +170,32 @@ export type DebridTorrentStatusDto =
   | { status: 'processing'; progress: number | null }
   | { status: 'finished' }
   | { status: 'error'; message: string };
+
+// ── Discovery preferences ───────────────────────────────────────────────────
+
+export interface DiscoveryPreferencesDto {
+  /** Preferred audio format; 'any' leaves the choice to ranking. */
+  preferredFormat: 'any' | 'flac' | 'mp3';
+  /** Minimum acceptable bitrate (kbps) for lossy formats; null = no minimum. */
+  minBitrateKbps: number | null;
+  /** Preferred debrid source id for retrieval, or 'auto'. */
+  preferredProvider: string;
+  /** Remember the last provider used for retrieval. */
+  rememberLastProvider: boolean;
+  /** Give already-cached releases a small ranking advantage. */
+  prioritizeCached: boolean;
+  /** Hide releases that no connected provider has cached. */
+  hideUncached: boolean;
+  /** Default discovery scope when finding sources. */
+  searchScope: 'auto' | 'track' | 'album';
+}
+
+export const DEFAULT_DISCOVERY_PREFERENCES: DiscoveryPreferencesDto = {
+  preferredFormat: 'any',
+  minBitrateKbps: null,
+  preferredProvider: 'auto',
+  rememberLastProvider: true,
+  prioritizeCached: true,
+  hideUncached: false,
+  searchScope: 'auto',
+};

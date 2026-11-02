@@ -18,6 +18,7 @@ import type {
   StreamUrlsRequestDto,
   StreamUrlsResponseDto,
   DiscoverRequestDto,
+  DiscoveryPreferencesDto,
   TorrentSourceWriteDto,
   UserDto,
 } from '@overtone/shared';
@@ -154,7 +155,12 @@ export function createEmbeddedRouter(core: OvertoneCore, opts: EmbeddedRouterOpt
   add('POST', '/api/torrent-sources/test', async ({ body }) => api.testTorrentSource(undefined, object<TorrentSourceWriteDto>(body, torrentKeys, ['kind'])));
   add('POST', '/api/torrent-sources/:id/test', async ({ params, body }) => api.testTorrentSource(params[0]!, object<TorrentSourceWriteDto>(body, torrentKeys)));
 
-  add('POST', '/api/discover', async ({ body }) => api.discover(object<DiscoverRequestDto>(body, ['trackId', 'albumId', 'query', 'type', 'limit'])));
+  add('POST', '/api/discover', async ({ body }) => api.discover(object<DiscoverRequestDto>(body, ['trackId', 'albumId', 'query', 'type', 'limit']), LOCAL_USER.id));
+
+  // ── discovery preferences ────────────────────────────────────────────────
+  const PREF_KEYS = ['preferredFormat', 'minBitrateKbps', 'preferredProvider', 'rememberLastProvider', 'prioritizeCached', 'hideUncached', 'searchScope'];
+  add('GET', '/api/preferences', async () => api.getPreferences(LOCAL_USER.id));
+  add('PUT', '/api/preferences', async ({ body }) => api.setPreferences(LOCAL_USER.id, object<DiscoveryPreferencesDto>(body, PREF_KEYS)));
 
   // ── debrid retrieval ("add to debrid") ──────────────────────────────────
   add('GET', '/api/debrid/providers', async () => api.listDebridProviders());

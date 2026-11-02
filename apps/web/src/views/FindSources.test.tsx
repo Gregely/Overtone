@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import type { DiscoverResultDto, DiscoverResponseDto } from '@overtone/shared';
+import { DEFAULT_DISCOVERY_PREFERENCES, type DiscoverResultDto, type DiscoverResponseDto } from '@overtone/shared';
 import { HttpTransport } from '../api/client';
 import { ApiProvider } from '../app/context';
 import { memoryStore } from '../platform/storage';
@@ -105,5 +105,24 @@ describe('FindSourcesDialog', () => {
 
     await user.click(screen.getByRole('button', { name: 'Add to AllDebrid' }));
     await waitFor(() => expect(calls.some((c) => c === 'POST /api/debrid/ad/add-magnet')).toBe(true));
+  });
+
+  it('uses the search-scope preference to search an album from a track', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const u = new URL(String(input instanceof Request ? input.url : input));
+      if (init?.body) bodies.push(JSON.parse(String(init.body)));
+      if (u.pathname === '/api/auth/login') return json({ accessToken: 'a', accessTokenExpiresAt: new Date(Date.now() + 3600_000).toISOString(), refreshToken: 'r', refreshTokenExpiresAt: new Date(Date.now() + 86400_000).toISOString(), user: { id: 1, username: 'admin', isAdmin: true } });
+      if (u.pathname === '/api/preferences') return json({ ...DEFAULT_DISCOVERY_PREFERENCES, searchScope: 'album' });
+      if (u.pathname === '/api/discover') return json({ query: { scope: 'album', title: 'Album' }, results: [], errors: [] });
+      return json({ error: { code: 'not_found', message: 'no route' } }, 404);
+    });
+    const api = new HttpTransport({ storage: memoryStore(), serverUrl: 'http://srv', fetch: fetch as unknown as typeof fetch });
+    await api.login({ username: 'admin', password: 'password1' });
+    renderDialog(<FindSourcesDialog target={{ kind: 'track', id: 5, albumId: 9, title: 'Track' }} onClose={() => {}} />, api);
+
+    await screen.findByText('No sources found');
+    const discoverBody = bodies.find((b) => b.albumId !== undefined || b.trackId !== undefined);
+    expect(discoverBody).toEqual({ albumId: 9 });
   });
 });

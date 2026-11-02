@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { DebridProviderDto, DiscoverCachedStatus, DiscoverResultDto } from '@overtone/shared';
-import { useAddMagnet, useDebridProviders, useDiscover, useScan, useTorrentStatus } from '../api/hooks';
+import type { DebridProviderDto, DiscoverCachedStatus, DiscoverRequestDto, DiscoverResultDto } from '@overtone/shared';
+import { useAddMagnet, useDebridProviders, useDiscover, usePreferences, useSavePreferences, useScan, useTorrentStatus } from '../api/hooks';
 import { useIsAdmin } from '../app/context';
 import { Dialog } from '../ui/Dialog';
 import { formatBytes, plural } from '../ui/format';
@@ -10,6 +10,8 @@ import { EmptyState, ErrorState, errorMessage, Spinner } from '../ui/states';
 export interface FindSourcesTarget {
   kind: 'track' | 'album';
   id: number;
+  /** For a track, its album id (used when the search scope is "complete album"). */
+  albumId?: number;
   title: string;
 }
 
@@ -23,8 +25,17 @@ const CACHED_LABEL: Record<DiscoverCachedStatus, string> = {
 /** "Find sources": discover and retrieve releases for a track or album. */
 export function FindSourcesDialog({ target, onClose }: { target: FindSourcesTarget; onClose: () => void }) {
   const discover = useDiscover();
-  const run = () => discover.mutate({ [target.kind === 'track' ? 'trackId' : 'albumId']: target.id });
-  useEffect(run, [target.kind, target.id]);
+  const prefs = usePreferences();
+  const body = (): DiscoverRequestDto => {
+    if (target.kind === 'album') return { albumId: target.id };
+    const scope = prefs.data?.searchScope ?? 'auto';
+    return scope === 'album' && target.albumId ? { albumId: target.albumId } : { trackId: target.id };
+  };
+  const run = () => discover.mutate(body());
+  useEffect(() => {
+    if (!prefs.isPending) run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target.kind, target.id, target.albumId, prefs.data?.searchScope, prefs.isPending]);
 
   return (
     <Dialog open onClose={onClose} title={`Find sources · ${target.title}`}>
@@ -127,6 +138,8 @@ function RetrievalPanel({ result }: { result: DiscoverResultDto }) {
   const providers = useDebridProviders();
   const add = useAddMagnet();
   const scan = useScan();
+  const prefs = usePreferences();
+  const savePrefs = useSavePreferences();
   const magnet = result.magnet ?? (result.infoHash ? `magnet:?xt=urn:btih:${result.infoHash}` : null);
 
   const [confirming, setConfirming] = useState<DebridProviderDto | null>(null);
@@ -138,18 +151,20 @@ function RetrievalPanel({ result }: { result: DiscoverResultDto }) {
     if (!job || !status.data) return;
     if (status.data.status === 'finished') {
       scan.mutate(job.sourceId);
+      if (prefs.data?.rememberLastProvider) savePrefs.mutate({ ...prefs.data, preferredProvider: job.sourceId });
       setNotice({ ok: true, text: 'Added to debrid. The new files are being scanned into your library.' });
       setJob(null);
     } else if (status.data.status === 'error') {
       setNotice({ ok: false, text: status.data.message });
       setJob(null);
     }
-  }, [status.data, job, scan]);
+  }, [status.data, job, scan, prefs.data, savePrefs]);
 
   if (!admin) return <p className="small muted">Only admins can retrieve releases.</p>;
   if (!magnet) return <p className="small muted">This result has no magnet link to retrieve.</p>;
 
-  const list = providers.data ?? [];
+  const preferred = prefs.data?.preferredProvider;
+  const list = [...(providers.data ?? [])].sort((a, b) => (a.sourceId === preferred ? -1 : b.sourceId === preferred ? 1 : 0));
 
   return (
     <div className="stack-sm">
@@ -161,6 +176,7 @@ function RetrievalPanel({ result }: { result: DiscoverResultDto }) {
           <div key={p.sourceId} className="row wrap" style={{ gap: 8 }}>
             <span className="truncate" style={{ flex: 1 }}>
               {p.name}
+              {p.sourceId === preferred && <span className="badge accent">Preferred</span>}
               {!p.retrieval ? <span className="badge">Coming soon</span> : cached ? <span className={`badge${cached === 'cached' ? ' accent' : ''}`}>{CACHED_LABEL[cached]}</span> : null}
             </span>
             <button type="button" className="btn small" disabled={!p.retrieval || Boolean(job)} aria-label={`Retrieve with ${p.name}`} onClick={() => setConfirming(p)}>

@@ -40,7 +40,7 @@ describe('rankHit', () => {
   const albumTarget: DiscoveryTarget = { scope: 'album', title: 'Led Zeppelin IV', artist: 'Led Zeppelin', album: 'Led Zeppelin IV', year: 1971 };
 
   it('scores an exact album match highest', () => {
-    const r = rankHit(albumTarget, hit({ title: 'Led Zeppelin - Led Zeppelin IV (1971) FLAC', format: 'flac', seeders: 50, files: 8 }));
+    const r = rankHit(albumTarget, hit({ title: 'Led Zeppelin - Led Zeppelin IV (1971) FLAC', seeders: 50, files: 8 }));
     expect(r.score).toBeGreaterThan(0.85);
     expect(r.reasons.join(' ')).toContain('1971');
   });
