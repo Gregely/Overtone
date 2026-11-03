@@ -209,6 +209,19 @@ describe('TorBox adapter', () => {
     expect(ctx.logs.find((l) => l.msg === 'debrid listing incomplete')?.data).toMatchObject({ listed: 3, audio: 2 });
   });
 
+  it('treats the documented "404 ITEM_NOT_FOUND" reply as an empty list, not an error', async () => {
+    // api-docs.torbox.app: "No usenet downloads found for this user." comes back as HTTP 404,
+    // documented with success: true; accept success: false too.
+    for (const success of [true, false]) {
+      const { provider, http, ctx } = setup();
+      const empty = () => json({ success, error: 'ITEM_NOT_FOUND', detail: 'No downloads found for this user.', data: null }, 404);
+      http.on('GET', `${API}/usenet/mylist`, empty);
+      http.on('GET', `${API}/webdl/mylist`, empty);
+      expect((await collect(provider.listLibrary({ signal }))).map((f) => f.id)).toEqual(['t:11:0']);
+      expect(ctx.logs.some((l) => l.level === 'warn')).toBe(false);
+    }
+  });
+
   it('stops at once on an auth error part-way through', async () => {
     const { provider, http } = setup();
     http.on('GET', `${API}/usenet/mylist`, fail('BAD_TOKEN', 403));

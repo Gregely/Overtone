@@ -12,7 +12,8 @@
  *  - 300 requests/min per API token
  *  - GET /user/me → { email, plan (0 Free, 1 Essential, 2 Pro, 3 Standard), premium_expires_at }
  *  - GET /{torrents|usenet|webdl}/mylist?bypass_cache&offset&limit →
- *    [{ id, name, download_finished, download_present, updated_at, files: [{ id, name, short_name, size, mimetype }] }]
+ *    [{ id, name, download_finished, download_present, updated_at, files: [{ id, name, short_name, size, mimetype }] }];
+ *    an empty list is HTTP 404 + ITEM_NOT_FOUND with data: null
  *  - GET /{kind}/requestdl?token&{torrent_id|usenet_id|web_id}&file_id → data: CDN URL,
  *    open for 3 hours to start a download (the URL embeds a token → proxy only)
  *  - Device login: GET /user/auth/device/start?app → { device_code, code,
@@ -140,7 +141,16 @@ class TorBoxAdapter implements DebridAdapter {
       const seen = new Set<number>();
       try {
         for (let offset = 0; ; offset += PAGE) {
-          const data = await this.#get<unknown>(`/${k.kind}/mylist?bypass_cache=true&offset=${offset}&limit=${PAGE}`, `List ${k.kind}`, signal, LIST_TIMEOUT_MS);
+          let data: unknown;
+          try {
+            data = await this.#get<unknown>(`/${k.kind}/mylist?bypass_cache=true&offset=${offset}&limit=${PAGE}`, `List ${k.kind}`, signal, LIST_TIMEOUT_MS);
+          } catch (err) {
+            // An empty list is documented as HTTP 404 + ITEM_NOT_FOUND ("No torrents
+            // found for this user"), sometimes with success: false. It means "nothing
+            // (more) here", e.g. an account that has never used usenet.
+            if (!(err instanceof ProviderError && err.code === 'not_found')) throw err;
+            data = null;
+          }
           if (data !== null && data !== undefined && !Array.isArray(data)) {
             throw new ProviderError('unavailable', `List ${k.kind}: unexpected response from TorBox`);
           }

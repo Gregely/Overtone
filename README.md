@@ -137,6 +137,23 @@ Debrid and Subsonic streams always go through your server. Their links carry
 credentials or are tied to the server's IP. Expired links are refreshed
 automatically.
 
+Debrid sources import audio only (FLAC, MP3, M4A, Opus, …). Video and other
+files in the account are skipped.
+
+**TorBox files not showing up?** After updating, rebuild the image
+(`docker compose up -d --build`; a plain `up -d` keeps running the old one),
+then rescan the source. If the files are still missing, run:
+
+```sh
+docker compose exec overtone node apps/server/dist/tools/diagnose-torbox.js
+```
+
+It uses the TorBox source you already set up, shows what TorBox returns and
+where files are dropped, and changes nothing. The output has file names but
+never your API key. From a source checkout, run `npm run diagnose:torbox`
+(set `OVERTONE_DATA_DIR` and `OVERTONE_SECRET_KEY` as for the server, or
+`TORBOX_API_KEY`).
+
 ## Writing a provider
 
 A provider is a folder under `apps/server/src/providers/<id>/` exporting a

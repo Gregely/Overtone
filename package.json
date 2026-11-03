@@ -18,6 +18,7 @@
     "test:watch": "vitest",
     "dev:server": "tsc -b packages/shared packages/core && npm run dev -w @overtone/server",
     "start": "npm run start -w @overtone/server",
+    "diagnose:torbox": "tsc -b packages/shared packages/core apps/server && node apps/server/dist/tools/diagnose-torbox.js",
     "dev:web": "npm run dev -w @overtone/web",
     "test:e2e": "npm run build -w @overtone/web && npm run e2e -w @overtone/web",
     "android:sync": "npm run android:sync -w @overtone/web",
